@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Чат | Messenger</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <!-- ========== САЙДБАР (Список пользователей) ========== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1>💬 Messenger</h1>
+        
+        <div class="current-user">
+          <div class="avatar" id="myAvatar">?</div>
+          <div class="info">
+            <div class="name" id="myName">Загрузка...</div>
+            <div class="email" id="myEmail">...</div>
+          </div>
+          <button class="logout-btn" onclick="logout()" title="Выйти">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="search-box">
+        <input type="text" class="search-input" id="searchInput" placeholder="🔍 Поиск пользователей...">
+      </div>
+
+      <div class="users-list" id="usersList">
+        <div class="users-title">Пользователи</div>
+        <div class="loading">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ========== ОСНОВНАЯ ОБЛАСТЬ ЧАТА ========== -->
+    <main class="chat-area" id="chatArea">
+      <!-- Пустое состояние -->
+      <div class="empty-chat" id="emptyChat">
+        <div class="icon">💬</div>
+        <h2>Выберите собеседника</h2>
+        <p>Выберите пользователя из списка слева, чтобы начать общение</p>
+      </div>
+
+      <!-- Активный чат (скрыт по умолчанию) -->
+      <div id="activeChat" style="display: none; flex: 1; display: none; flex-direction: column;">
+        <!-- Заголовок чата -->
+        <header class="chat-header">
+          <div class="avatar" id="partnerAvatar">?</div>
+          <div class="info">
+            <div class="name" id="partnerName">Имя</div>
+            <div class="status" id="partnerStatus">онлайн</div>
+          </div>
+        </header>
+
+        <!-- Сообщения -->
+        <div class="messages-container" id="messagesContainer">
+          <!-- Сообщения будут здесь -->
+        </div>
+
+        <!-- Поле ввода -->
+        <div class="message-input-container">
+          <div class="message-input-wrapper">
+            <textarea 
+              class="message-input" 
+              id="messageInput" 
+              placeholder="Введите сообщение..." 
+              rows="1"
+            ></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // =============================================
+    // СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+    // =============================================
+    const state = {
+      currentUser: {
+        email: localStorage.getItem('userEmail'),
+        name: localStorage.getItem('userName'),
+        id: localStorage.getItem('userId')
+      },
+      selectedUser: null,
+      users: [],
+      messages: [],
+      pollInterval: null,
+      usersPollInterval: null
+    };
+
+    // =============================================
+    // ИНИЦИАЛИЗАЦИЯ
+    // =============================================
+    document.addEventListener('DOMContentLoaded', () => {
+      // Проверяем авторизацию
+      if (!state.currentUser.email) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      // Отображаем данные текущего пользователя
+      document.getElementById('myName').textContent = state.currentUser.name || 'Пользователь';
+      document.getElementById('myEmail').textContent = state.currentUser.email;
+      document.getElementById('myAvatar').textContent = getInitials(state.currentUser.name);
+      document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
+
+      // Загружаем список пользователей
+      loadUsers();
+
+      // Обновляем список пользователей каждые 5 секунд
+      state.usersPollInterval = setInterval(loadUsers, 5000);
+
+      // Обработчик ввода сообщения
+      const messageInput = document.getElementById('messageInput');
+      messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // Автоматическое изменение высоты textarea
+      messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
+      });
+
+      // Поиск пользователей
+      document.getElementById('searchInput').addEventListener('input', filterUsers);
+    });
+
+    // =============================================
+    // ФУНКЦИИ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ
+    // =============================================
+    async function loadUsers() {
+      try {
+        const response = await fetch(`/api/users?currentEmail=${encodeURIComponent(state.currentUser.email)}`);
+        const data = await response.json();
+
+        if (data.success) {
+          state.users = data.users;
+          renderUsers(data.users);
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки пользователей:', error);
+      }
+    }
+
+    function renderUsers(users) {
+      const container = document.getElementById('usersList');
+      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+      
+      // Фильтруем по поиску
+      const filtered = users.filter(u => 
+        u.username.toLowerCase().includes(searchTerm) || 
+        u.email.toLowerCase().includes(searchTerm)
+      );
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="users-title">Пользователи</div>
+          <div class="no-users">
+            <div class="icon">👥</div>
+            <p>${searchTerm ? 'Никого не найдено' : 'Пока нет других пользователей'}</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="users-title">Пользователи (${filtered.length})</div>
+        ${filtered.map(user => `
+          <div class="user-item ${state.selectedUser?.email === user.email ? 'active' : ''}" 
+               onclick="selectUser('${user.email}', '${escapeHtml(user.username)}', ${user.id})">
+            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
+            <div class="details">
+              <div class="name">${escapeHtml(user.username)}</div>
+              <div class="last-message">
+                ${user.lastMessage 
+                  ? (user.lastMessageIsMine ? 'Вы: ' : '') + escapeHtml(truncate(user.lastMessage, 30))
+                  : '💬 Начните диалог'}
+              </div>
+            </div>
+            <div class="meta">
+              ${user.lastMessageTime ? `<div class="time">${formatTime(user.lastMessageTime)}</div>` : ''}
+              ${user.unreadCount > 0 ? `<div class="unread-badge">${user.unreadCount}</div>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    function filterUsers() {
+      renderUsers(state.users);
+    }
+
+    function selectUser(email, name, id) {
+      state.selectedUser = { email, name, id };
+
+      // Обновляем UI
+      document.getElementById('emptyChat').style.display = 'none';
+      document.getElementById('activeChat').style.display = 'flex';
+      
+      document.getElementById('partnerName').textContent = name;
+      document.getElementById('partnerAvatar').textContent = getInitials(name);
+      document.getElementById('partnerAvatar').className = `avatar ${getAvatarClass(id)}`;
+
+      // Обновляем активный элемент в списке
+      document.querySelectorAll('.user-item').forEach(el => {
+        el.classList.remove('active');
+        if (el.onclick.toString().includes(email)) {
+          el.classList.add('active');
+        }
+      });
+
+      // Загружаем сообщения
+      loadMessages();
+
+      // Запускаем polling сообщений каждые 2 секунды
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+      }
+      state.pollInterval = setInterval(loadMessages, 2000);
+
+      // Фокус на поле ввода
+      document.getElementById('messageInput').focus();
+    }
+
+    // =============================================
+    // ФУНКЦИИ РАБОТЫ С СООБЩЕНИЯМИ
+    // =============================================
+    async function loadMessages() {
+      if (!state.selectedUser) return;
+
+      try {
+        const response = await fetch(
+          `/api/messages?with=${encodeURIComponent(state.selectedUser.email)}&currentEmail=${encodeURIComponent(state.currentUser.email)}`
+        );
+        const data = await response.json();
+
+        if (data.success) {
+          const wasAtBottom = isScrolledToBottom();
+          const prevCount = state.messages.length;
+          
+          state.messages = data.messages;
+          renderMessages(data.messages);
+
+          // Если были новые сообщения или пользователь был внизу, скроллим вниз
+          if (data.messages.length > prevCount || wasAtBottom) {
+            scrollToBottom();
+          }
+
+          // Обновляем список пользователей (для обновления непрочитанных)
+          loadUsers();
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки сообщений:', error);
+      }
+    }
+
+    function renderMessages(messages) {
+      const container = document.getElementById('messagesContainer');
+      
+      if (messages.length === 0) {
+        container.innerHTML = `
+          <div class="empty-chat" style="height: 100%;">
+            <div class="icon">👋</div>
+            <h2>Начните общение</h2>
+            <p>Отправьте первое сообщение</p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+      let lastDate = '';
+
+      messages.forEach(msg => {
+        const msgDate = formatDate(msg.timestamp);
+        
+        // Добавляем разделитель дат
+        if (msgDate !== lastDate) {
+          html += `<div class="date-divider"><span>${msgDate}</span></div>`;
+          lastDate = msgDate;
+        }
+
+        const isMine = msg.sender_email === state.currentUser.email;
+        html += `
+          <div class="message ${isMine ? 'mine' : 'other'}">
+            <div class="message-bubble">
+              <div class="message-text">${escapeHtml(msg.message_text)}</div>
+              <div class="message-time">${formatMessageTime(msg.timestamp)}</div>
+            </div>
+          </div>
+        `;
+      });
+
+      container.innerHTML = html;
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+
+      if (!text || !state.selectedUser) return;
+
+      // Блокируем кнопку
+      const btn = document.getElementById('sendBtn');
+      btn.disabled = true;
+
+      try {
+        const response = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            senderEmail: state.currentUser.email,
+            receiverEmail: state.selectedUser.email,
+            messageText: text
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          input.value = '';
+          input.style.height = 'auto';
+          
+          // Добавляем сообщение локально
+          state.messages.push(data.message);
+          renderMessages(state.messages);
+          scrollToBottom();
+          
+          // Обновляем список пользователей
+          loadUsers();
+        } else {
+          alert(data.error || 'Ошибка отправки');
+        }
+      } catch (error) {
+        console.error('Ошибка отправки:', error);
+        alert('Ошибка сети');
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    }
+
+    // =============================================
+    // УТИЛИТЫ
+    // =============================================
+    function getInitials(name) {
+      if (!name) return '?';
+      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    }
+
+    function getAvatarClass(id) {
+      const colors = ['avatar-1', 'avatar-2', 'avatar-3', 'avatar-4', 'avatar-5', 'avatar-6'];
+      return colors[(parseInt(id) || 0) % colors.length];
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function truncate(text, length) {
+      if (!text) return '';
+      return text.length > length ? text.substring(0, length) + '...' : text;
+    }
+
+    function formatTime(timestamp) {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) {
+        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      } else if (diffDays === 1) {
+        return 'Вчера';
+      } else if (diffDays < 7) {
+        return date.toLocaleDateString('ru-RU', { weekday: 'short' });
+      } else {
+        return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      }
+    }
+
+    function formatDate(timestamp) {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) {
+        return 'Сегодня';
+      } else if (diffDays === 1) {
+        return 'Вчера';
+      } else {
+        return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+      }
+    }
+
+    function formatMessageTime(timestamp) {
+      return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function isScrolledToBottom() {
+      const container = document.getElementById('messagesContainer');
+      return container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById('messagesContainer');
+      setTimeout(() => {
+        container.scrollTop = container.scrollHeight;
+      }, 50);
+    }
+
+    function logout() {
+      // Очищаем интервалы
+      if (state.pollInterval) clearInterval(state.pollInterval);
+      if (state.usersPollInterval) clearInterval(state.usersPollInterval);
+
+      // Очищаем localStorage
+      localStorage.removeItem('userEmail');
+      localStorage.removeItem('userName');
+      localStorage.removeItem('userId');
+
+      // Перенаправляем на логин
+      window.location.href = 'login.html';
+    }
+
+    // Очистка при уходе со страницы
+    window.addEventListener('beforeunload', () => {
+      if (state.pollInterval) clearInterval(state.pollInterval);
+      if (state.usersPollInterval) clearInterval(state.usersPollInterval);
+    });
+  </script>
+</body>
+</html>

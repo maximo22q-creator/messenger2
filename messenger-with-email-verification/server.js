@@ -8,10 +8,13 @@ const cors = require('cors');
 const Database = require('better-sqlite3');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const dns = require('dns');
+
+// Заставляем Node.js использовать IPv4 (для Render)
+dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
-app.use(express.static('public'));
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // =============================================
 // MIDDLEWARE
@@ -25,7 +28,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // =============================================
 const db = new Database('messenger.db');
 
-// Создаём таблицу users
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +40,6 @@ db.exec(`
   )
 `);
 
-// Создаём таблицу messages
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +51,6 @@ db.exec(`
   )
 `);
 
-// Создаём индексы для быстрого поиска
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_email);
   CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_email);
@@ -60,13 +60,19 @@ db.exec(`
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// НАСТРОЙКА ПОЧТЫ (Nodemailer + Gmail)
+// НАСТРОЙКА ПОЧТЫ (Nodemailer + Gmail через порт 587)
 // =============================================
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
   auth: {
     user: 'skambombtg@gmail.com',
     pass: 'udgovsgftmvgevxm'
+  },
+  tls: {
+    rejectUnauthorized: false
   }
 });
 
@@ -222,7 +228,6 @@ app.post('/login', (req, res) => {
 
 // =============================================
 // ЭНДПОИНТ: ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ
-// GET /api/users?currentEmail=EMAIL
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
@@ -232,7 +237,6 @@ app.get('/api/users', (req, res) => {
       return res.status(400).json({ success: false, error: 'currentEmail обязателен' });
     }
 
-    // Получаем всех подтверждённых пользователей кроме текущего
     const users = db.prepare(`
       SELECT id, username, email, created_at 
       FROM users 
@@ -240,7 +244,6 @@ app.get('/api/users', (req, res) => {
       ORDER BY username ASC
     `).all(currentEmail);
 
-    // Для каждого пользователя получаем количество непрочитанных сообщений
     const usersWithUnread = users.map(user => {
       const unreadCount = db.prepare(`
         SELECT COUNT(*) as count 
@@ -248,7 +251,6 @@ app.get('/api/users', (req, res) => {
         WHERE sender_email = ? AND receiver_email = ? AND is_read = 0
       `).get(user.email, currentEmail);
 
-      // Получаем последнее сообщение
       const lastMessage = db.prepare(`
         SELECT message_text, timestamp, sender_email
         FROM messages 
@@ -267,7 +269,6 @@ app.get('/api/users', (req, res) => {
       };
     });
 
-    // Сортируем: сначала с последними сообщениями
     usersWithUnread.sort((a, b) => {
       if (a.lastMessageTime && b.lastMessageTime) {
         return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
@@ -287,7 +288,6 @@ app.get('/api/users', (req, res) => {
 
 // =============================================
 // ЭНДПОИНТ: ПОЛУЧИТЬ СООБЩЕНИЯ
-// GET /api/messages?with=EMAIL&currentEmail=EMAIL
 // =============================================
 app.get('/api/messages', (req, res) => {
   try {
@@ -297,7 +297,6 @@ app.get('/api/messages', (req, res) => {
       return res.status(400).json({ success: false, error: 'with и currentEmail обязательны' });
     }
 
-    // Получаем все сообщения между двумя пользователями
     const messages = db.prepare(`
       SELECT id, sender_email, receiver_email, message_text, timestamp
       FROM messages 
@@ -306,7 +305,6 @@ app.get('/api/messages', (req, res) => {
       ORDER BY timestamp ASC
     `).all(currentEmail, partnerEmail, partnerEmail, currentEmail);
 
-    // Помечаем сообщения как прочитанные
     db.prepare(`
       UPDATE messages 
       SET is_read = 1 
@@ -323,8 +321,6 @@ app.get('/api/messages', (req, res) => {
 
 // =============================================
 // ЭНДПОИНТ: ОТПРАВИТЬ СООБЩЕНИЕ
-// POST /api/messages
-// Body: { senderEmail, receiverEmail, messageText }
 // =============================================
 app.post('/api/messages', (req, res) => {
   try {
@@ -338,13 +334,11 @@ app.post('/api/messages', (req, res) => {
       return res.status(400).json({ success: false, error: 'Сообщение не может быть пустым' });
     }
 
-    // Проверяем существование получателя
     const receiver = db.prepare('SELECT * FROM users WHERE email = ? AND is_verified = 1').get(receiverEmail);
     if (!receiver) {
       return res.status(404).json({ success: false, error: 'Получатель не найден' });
     }
 
-    // Сохраняем сообщение
     const result = db.prepare(`
       INSERT INTO messages (sender_email, receiver_email, message_text) 
       VALUES (?, ?, ?)
@@ -364,7 +358,6 @@ app.post('/api/messages', (req, res) => {
 
 // =============================================
 // ЭНДПОИНТ: ПОЛУЧИТЬ ИНФОРМАЦИЮ О ПОЛЬЗОВАТЕЛЕ
-// GET /api/user?email=EMAIL
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
@@ -406,16 +399,7 @@ app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
   console.log('═══════════════════════════════════════════════');
-  console.log(`  📍 URL: http://localhost:${PORT}`);
-  console.log('  📄 Страницы:');
-  console.log(`     • Регистрация: http://localhost:${PORT}/register.html`);
-  console.log(`     • Верификация: http://localhost:${PORT}/verify.html`);
-  console.log(`     • Вход: http://localhost:${PORT}/login.html`);
-  console.log(`     • Чат: http://localhost:${PORT}/chat.html`);
-  console.log('  📡 API:');
-  console.log(`     • GET  /api/users?currentEmail=...`);
-  console.log(`     • GET  /api/messages?with=...&currentEmail=...`);
-  console.log(`     • POST /api/messages`);
+  console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');
   console.log('');
 });

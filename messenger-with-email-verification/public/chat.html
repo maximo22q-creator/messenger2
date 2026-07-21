@@ -8,7 +8,6 @@
 </head>
 <body>
   <div class="chat-container">
-    <!-- ========== САЙДБАР (Список пользователей) ========== -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <h1>💬 Messenger</h1>
@@ -39,18 +38,14 @@
       </div>
     </aside>
 
-    <!-- ========== ОСНОВНАЯ ОБЛАСТЬ ЧАТА ========== -->
     <main class="chat-area" id="chatArea">
-      <!-- Пустое состояние -->
       <div class="empty-chat" id="emptyChat">
         <div class="icon">💬</div>
         <h2>Выберите собеседника</h2>
         <p>Выберите пользователя из списка слева, чтобы начать общение</p>
       </div>
 
-      <!-- Активный чат (скрыт по умолчанию) -->
       <div id="activeChat" style="display: none; flex-direction: column;">
-        <!-- Заголовок чата -->
         <header class="chat-header">
           <div class="avatar" id="partnerAvatar">?</div>
           <div class="info">
@@ -59,12 +54,8 @@
           </div>
         </header>
 
-        <!-- Сообщения -->
-        <div class="messages-container" id="messagesContainer">
-          <!-- Сообщения будут здесь -->
-        </div>
+        <div class="messages-container" id="messagesContainer"></div>
 
-        <!-- Поле ввода -->
         <div class="message-input-container">
           <div class="message-input-wrapper">
             <textarea 
@@ -85,9 +76,6 @@
   </div>
 
   <script>
-    // =============================================
-    // СОСТОЯНИЕ ПРИЛОЖЕНИЯ
-    // =============================================
     const state = {
       currentUser: {
         username: localStorage.getItem('userName'),
@@ -96,33 +84,26 @@
       selectedUser: null,
       users: [],
       messages: [],
+      renderedMessageIds: new Set(), // ← отслеживаем уже отрисованные сообщения
+      lastRenderedDate: '',           // ← последняя отрисованная дата
       pollInterval: null,
       usersPollInterval: null
     };
 
-    // =============================================
-    // ИНИЦИАЛИЗАЦИЯ
-    // =============================================
     document.addEventListener('DOMContentLoaded', () => {
-      // Проверяем авторизацию
       if (!state.currentUser.username) {
         window.location.href = 'login.html';
         return;
       }
 
-      // Отображаем данные текущего пользователя
       document.getElementById('myName').textContent = state.currentUser.username;
       document.getElementById('myUsername').textContent = '@' + state.currentUser.username;
       document.getElementById('myAvatar').textContent = getInitials(state.currentUser.username);
       document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
 
-      // Загружаем список пользователей
       loadUsers();
-
-      // Обновляем список пользователей каждые 5 секунд
       state.usersPollInterval = setInterval(loadUsers, 5000);
 
-      // Обработчик ввода сообщения
       const messageInput = document.getElementById('messageInput');
       messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -131,19 +112,14 @@
         }
       });
 
-      // Автоматическое изменение высоты textarea
       messageInput.addEventListener('input', () => {
         messageInput.style.height = 'auto';
         messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
       });
 
-      // Поиск пользователей
       document.getElementById('searchInput').addEventListener('input', filterUsers);
     });
 
-    // =============================================
-    // ФУНКЦИИ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ
-    // =============================================
     async function loadUsers() {
       try {
         const response = await fetch(`/api/users?currentUsername=${encodeURIComponent(state.currentUser.username)}`);
@@ -162,7 +138,6 @@
       const container = document.getElementById('usersList');
       const searchTerm = document.getElementById('searchInput').value.toLowerCase();
       
-      // Фильтруем по поиску
       const filtered = users.filter(u => 
         u.username.toLowerCase().includes(searchTerm)
       );
@@ -208,7 +183,6 @@
     function selectUser(username, id) {
       state.selectedUser = { username, id };
 
-      // Обновляем UI
       document.getElementById('emptyChat').style.display = 'none';
       document.getElementById('activeChat').style.display = 'flex';
       
@@ -216,7 +190,6 @@
       document.getElementById('partnerAvatar').textContent = getInitials(username);
       document.getElementById('partnerAvatar').className = `avatar ${getAvatarClass(id)}`;
 
-      // Обновляем активный элемент в списке
       document.querySelectorAll('.user-item').forEach(el => {
         el.classList.remove('active');
         if (el.onclick.toString().includes(`'${username}'`)) {
@@ -224,23 +197,23 @@
         }
       });
 
-      // Загружаем сообщения
-      loadMessages();
+      // Сбрасываем состояние чата при выборе нового собеседника
+      state.messages = [];
+      state.renderedMessageIds = new Set();
+      state.lastRenderedDate = '';
+      document.getElementById('messagesContainer').innerHTML = '';
 
-      // Запускаем polling сообщений каждые 2 секунды
+      loadMessages(true); // первая загрузка - полная
+
       if (state.pollInterval) {
         clearInterval(state.pollInterval);
       }
-      state.pollInterval = setInterval(loadMessages, 2000);
+      state.pollInterval = setInterval(() => loadMessages(false), 2000);
 
-      // Фокус на поле ввода
       document.getElementById('messageInput').focus();
     }
 
-    // =============================================
-    // ФУНКЦИИ РАБОТЫ С СООБЩЕНИЯМИ
-    // =============================================
-    async function loadMessages() {
+    async function loadMessages(isFirstLoad = false) {
       if (!state.selectedUser) return;
 
       try {
@@ -251,52 +224,66 @@
 
         if (data.success) {
           const wasAtBottom = isScrolledToBottom();
-          const prevCount = state.messages.length;
-          
+          const oldCount = state.messages.length;
           state.messages = data.messages;
-          renderMessages(data.messages);
+          
+          // Добавляем только НОВЫЕ сообщения
+          appendNewMessages(data.messages);
 
-          // Если были новые сообщения или пользователь был внизу, скроллим вниз
-          if (data.messages.length > prevCount || wasAtBottom) {
+          // Скроллим вниз, если пользователь был внизу или это новые сообщения
+          const hasNewMessages = data.messages.length > oldCount;
+          if (isFirstLoad || wasAtBottom || hasNewMessages) {
             scrollToBottom();
           }
 
-          // Обновляем список пользователей (для обновления непрочитанных)
-          loadUsers();
+          // Обновляем список пользователей (для непрочитанных)
+          if (hasNewMessages) {
+            loadUsers();
+          }
         }
       } catch (error) {
         console.error('Ошибка загрузки сообщений:', error);
       }
     }
 
-    function renderMessages(messages) {
+    function appendNewMessages(messages) {
       const container = document.getElementById('messagesContainer');
       
       if (messages.length === 0) {
-        container.innerHTML = `
-          <div class="empty-chat" style="height: 100%;">
-            <div class="icon">👋</div>
-            <h2>Начните общение</h2>
-            <p>Отправьте первое сообщение</p>
-          </div>
-        `;
+        if (state.renderedMessageIds.size === 0) {
+          container.innerHTML = `
+            <div class="empty-chat" style="height: 100%;">
+              <div class="icon">👋</div>
+              <h2>Начните общение</h2>
+              <p>Отправьте первое сообщение</p>
+            </div>
+          `;
+        }
         return;
       }
 
-      let html = '';
-      let lastDate = '';
+      // Убираем "начните общение" если оно там висит
+      const emptyBlock = container.querySelector('.empty-chat');
+      if (emptyBlock) {
+        container.innerHTML = '';
+        state.lastRenderedDate = '';
+      }
 
+      let html = '';
+      
       messages.forEach(msg => {
+        // Пропускаем уже отрисованные сообщения
+        if (state.renderedMessageIds.has(msg.id)) return;
+
         const msgDate = formatDate(msg.timestamp);
         
-        // Добавляем разделитель дат
-        if (msgDate !== lastDate) {
+        // Добавляем разделитель дат если дата поменялась
+        if (msgDate !== state.lastRenderedDate) {
           html += `<div class="date-divider"><span>${msgDate}</span></div>`;
-          lastDate = msgDate;
+          state.lastRenderedDate = msgDate;
         }
 
         const isMine = msg.sender_username === state.currentUser.username;
-
         html += `
           <div class="message ${isMine ? 'mine' : 'other'}">
             <div class="message-bubble">
@@ -305,9 +292,13 @@
             </div>
           </div>
         `;
+        
+        state.renderedMessageIds.add(msg.id);
       });
 
-      container.innerHTML = html;
+      if (html) {
+        container.insertAdjacentHTML('beforeend', html);
+      }
     }
 
     async function sendMessage() {
@@ -316,7 +307,6 @@
 
       if (!text || !state.selectedUser) return;
 
-      // Блокируем кнопку
       const btn = document.getElementById('sendBtn');
       btn.disabled = true;
 
@@ -337,12 +327,11 @@
           input.value = '';
           input.style.height = 'auto';
           
-          // Добавляем сообщение локально
+          // Добавляем сообщение локально сразу
           state.messages.push(data.message);
-          renderMessages(state.messages);
+          appendNewMessages([data.message]);
           scrollToBottom();
           
-          // Обновляем список пользователей
           loadUsers();
         } else {
           alert(data.error || 'Ошибка отправки');
@@ -356,9 +345,6 @@
       }
     }
 
-    // =============================================
-    // УТИЛИТЫ
-    // =============================================
     function getInitials(name) {
       if (!name) return '?';
       return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
@@ -433,20 +419,16 @@
     }
 
     function logout() {
-      // Очищаем интервалы
       if (state.pollInterval) clearInterval(state.pollInterval);
       if (state.usersPollInterval) clearInterval(state.usersPollInterval);
 
-      // Очищаем localStorage
       localStorage.removeItem('userName');
       localStorage.removeItem('userId');
-      localStorage.removeItem('userEmail'); // на всякий случай
+      localStorage.removeItem('userEmail');
 
-      // Перенаправляем на логин
       window.location.href = 'login.html';
     }
 
-    // Очистка при уходе со страницы
     window.addEventListener('beforeunload', () => {
       if (state.pollInterval) clearInterval(state.pollInterval);
       if (state.usersPollInterval) clearInterval(state.usersPollInterval);

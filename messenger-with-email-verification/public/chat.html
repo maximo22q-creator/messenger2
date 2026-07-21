@@ -87,9 +87,9 @@
         id: localStorage.getItem('userId')
       },
       selectedUser: null,
-      chats: [],           // список чатов (кому писал/от кого получал)
-      searchResults: [],   // результаты поиска
-      isSearching: false,  // режим поиска
+      chats: [],
+      searchResults: [],
+      isSearching: false,
       messages: [],
       renderedMessageIds: new Set(),
       lastRenderedDate: '',
@@ -98,10 +98,37 @@
       searchTimeout: null
     };
 
-    document.addEventListener('DOMContentLoaded', () => {
-      if (!state.currentUser.username) {
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Проверка авторизации по токену
+      const token = localStorage.getItem('authToken');
+      if (!token) {
         window.location.href = 'login.html';
         return;
+      }
+
+      try {
+        const r = await fetch('/api/auth/check', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ token })
+        });
+        const d = await r.json();
+        
+        if (!d.success) {
+          localStorage.clear();
+          window.location.href = 'login.html';
+          return;
+        }
+
+        state.currentUser.username = d.user.username;
+        state.currentUser.id = d.user.id;
+        localStorage.setItem('userName', d.user.username);
+        localStorage.setItem('userId', d.user.id);
+      } catch (e) {
+        if (!state.currentUser.username) {
+          window.location.href = 'login.html';
+          return;
+        }
       }
 
       document.getElementById('myName').textContent = state.currentUser.username;
@@ -127,27 +154,20 @@
         messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
       });
 
-      // Поиск с задержкой (debounce)
       document.getElementById('searchInput').addEventListener('input', (e) => {
         const query = e.target.value.trim();
-        
         if (state.searchTimeout) clearTimeout(state.searchTimeout);
-        
         if (query.length === 0) {
           state.isSearching = false;
           renderChats(state.chats);
           return;
         }
-
         state.searchTimeout = setTimeout(() => {
           searchUsers(query);
         }, 300);
       });
     });
 
-    // =============================================
-    // ЗАГРУЗКА СПИСКА ЧАТОВ
-    // =============================================
     async function loadChats() {
       try {
         const response = await fetch(`/api/users?currentUsername=${encodeURIComponent(state.currentUser.username)}`);
@@ -164,9 +184,6 @@
       }
     }
 
-    // =============================================
-    // ПОИСК ПОЛЬЗОВАТЕЛЕЙ
-    // =============================================
     async function searchUsers(query) {
       state.isSearching = true;
       try {
@@ -184,9 +201,6 @@
       }
     }
 
-    // =============================================
-    // ОТРИСОВКА СПИСКА ЧАТОВ
-    // =============================================
     function renderChats(chats) {
       const container = document.getElementById('usersList');
       
@@ -225,9 +239,6 @@
       `;
     }
 
-    // =============================================
-    // ОТРИСОВКА РЕЗУЛЬТАТОВ ПОИСКА
-    // =============================================
     function renderSearchResults(users, query) {
       const container = document.getElementById('usersList');
       
@@ -257,9 +268,6 @@
       `;
     }
 
-    // =============================================
-    // ВЫБОР СОБЕСЕДНИКА
-    // =============================================
     function selectUser(username, id) {
       state.selectedUser = { username, id };
 
@@ -277,7 +285,6 @@
         }
       });
 
-      // Сброс состояния чата
       state.messages = [];
       state.renderedMessageIds = new Set();
       state.lastRenderedDate = '';
@@ -290,7 +297,6 @@
 
       document.getElementById('messageInput').focus();
 
-      // Мобильный режим
       if (window.innerWidth <= 768) {
         document.getElementById('sidebar').classList.add('hidden');
         document.getElementById('chatArea').classList.add('active');
@@ -302,9 +308,6 @@
       document.getElementById('chatArea').classList.remove('active');
     }
 
-    // =============================================
-    // ЗАГРУЗКА СООБЩЕНИЙ
-    // =============================================
     async function loadMessages(isFirstLoad = false) {
       if (!state.selectedUser) return;
 
@@ -387,9 +390,6 @@
       }
     }
 
-    // =============================================
-    // ОТПРАВКА СООБЩЕНИЯ
-    // =============================================
     async function sendMessage() {
       const input = document.getElementById('messageInput');
       const text = input.value.trim();
@@ -420,7 +420,6 @@
           appendNewMessages([data.message]);
           scrollToBottom();
           
-          // Обновляем список чатов (новый чат появится)
           if (!state.isSearching) {
             loadChats();
           }
@@ -436,9 +435,6 @@
       }
     }
 
-    // =============================================
-    // УТИЛИТЫ
-    // =============================================
     function getInitials(name) {
       if (!name) return '?';
       return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
@@ -512,14 +508,22 @@
       }, 50);
     }
 
-    function logout() {
+    async function logout() {
       if (state.pollInterval) clearInterval(state.pollInterval);
       if (state.usersPollInterval) clearInterval(state.usersPollInterval);
 
-      localStorage.removeItem('userName');
-      localStorage.removeItem('userId');
-      localStorage.removeItem('userEmail');
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        try {
+          await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ token })
+          });
+        } catch(e) {}
+      }
 
+      localStorage.clear();
       window.location.href = 'login.html';
     }
 

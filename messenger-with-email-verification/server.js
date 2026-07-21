@@ -1,7 +1,6 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
-// Node.js + Express + SQLite
-// С мульти-аккаунтами и профилями
+// С блокировками, локальными именами, удалением
 // =============================================
 
 const express = require('express');
@@ -13,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: '2mb' })); // для аватарок
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const db = new Database('messenger.db');
@@ -30,7 +29,6 @@ db.exec(`
   )
 `);
 
-// Добавляем колонки если их нет (для существующих БД)
 try { db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch(e) {}
@@ -56,11 +54,47 @@ db.exec(`
   )
 `);
 
+// Блокировки
+db.exec(`
+  CREATE TABLE IF NOT EXISTS blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    blocker_username TEXT NOT NULL,
+    blocked_username TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(blocker_username, blocked_username)
+  )
+`);
+
+// Локальные имена (только для того кто установил)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS contact_names (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL,
+    contact_username TEXT NOT NULL,
+    custom_name TEXT NOT NULL,
+    UNIQUE(owner_username, contact_username)
+  )
+`);
+
+// Скрытые чаты (для "удалить чат")
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hidden_chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL,
+    hidden_username TEXT NOT NULL,
+    hidden_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(owner_username, hidden_username)
+  )
+`);
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
   CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_username);
   CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
   CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocker ON blocks(blocker_username);
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_username);
+  CREATE INDEX IF NOT EXISTS idx_contacts ON contact_names(owner_username);
 `);
 
 console.log('✅ База данных SQLite готова');
@@ -78,130 +112,95 @@ function validateUsername(username) {
   return null;
 }
 
+// Проверка токена → username
+function getUsernameByToken(token) {
+  if (!token) return null;
+  const session = db.prepare('SELECT username FROM sessions WHERE token = ?').get(token);
+  return session?.username || null;
+}
+
 // =============================================
-// РЕГИСТРАЦИЯ
+// РЕГИСТРАЦИЯ / ВХОД / ТОКЕНЫ
 // =============================================
 app.post('/register', (req, res) => {
   try {
     const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
 
-    if (!username || !password) {
-      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
-    }
+    const trimmed = username.trim();
+    const err = validateUsername(trimmed);
+    if (err) return res.status(400).json({ success: false, error: err });
+    if (password.length < 6) return res.status(400).json({ success: false, error: 'Пароль минимум 6 символов' });
 
-    const trimmedUsername = username.trim();
-    const validationError = validateUsername(trimmedUsername);
-    if (validationError) {
-      return res.status(400).json({ success: false, error: validationError });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
-    }
-
-    const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
-    if (existingUser) {
-      return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
-    }
+    const exists = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmed);
+    if (exists) return res.status(409).json({ success: false, error: 'Такой ник уже занят' });
 
     const result = db.prepare('INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)')
-      .run(trimmedUsername, password, trimmedUsername);
+      .run(trimmed, password, trimmed);
     const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE id = ?')
       .get(result.lastInsertRowid);
     
     const token = generateToken();
-    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmed);
     
-    console.log(`✅ Новый пользователь: ${trimmedUsername}`);
-    
+    console.log(`✅ Новый пользователь: ${trimmed}`);
     res.json({ success: true, user, token });
-
   } catch (error) {
-    console.error('Ошибка регистрации:', error);
-    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// ВХОД
-// =============================================
 app.post('/login', (req, res) => {
   try {
     const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
 
-    if (!username || !password) {
-      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
-    }
-
-    const trimmedUsername = username.trim();
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
-
+    const trimmed = username.trim();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmed);
     if (!user || user.password !== password) {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
     }
 
     const token = generateToken();
-    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmed);
 
-    console.log(`🔑 Вход: ${trimmedUsername}`);
-    
+    console.log(`🔑 Вход: ${trimmed}`);
     res.json({ 
       success: true,
-      user: { 
-        id: user.id, 
-        username: user.username,
-        display_name: user.display_name,
-        bio: user.bio,
-        avatar: user.avatar
-      },
+      user: { id: user.id, username: user.username, display_name: user.display_name, bio: user.bio, avatar: user.avatar },
       token
     });
-
   } catch (error) {
-    console.error('Ошибка входа:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// ПРОВЕРКА ТОКЕНА
-// =============================================
 app.post('/api/auth/check', (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'Токен обязателен' });
-    }
+    if (!token) return res.status(400).json({ success: false, error: 'Токен обязателен' });
 
     const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
-    if (!session) {
-      return res.status(401).json({ success: false, error: 'Токен недействителен' });
-    }
+    if (!session) return res.status(401).json({ success: false, error: 'Токен недействителен' });
 
-    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
-      .get(session.username);
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?').get(session.username);
     if (!user) {
       db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
       return res.status(401).json({ success: false, error: 'Пользователь не найден' });
     }
 
     db.prepare('UPDATE sessions SET last_used = CURRENT_TIMESTAMP WHERE token = ?').run(token);
-
     res.json({ success: true, user });
   } catch (error) {
-    console.error('Ошибка проверки токена:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// ВЫХОД
-// =============================================
 app.post('/api/auth/logout', (req, res) => {
   try {
     const { token } = req.body;
-    if (token) {
-      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-    }
+    if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
@@ -209,138 +208,224 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // =============================================
-// ОБНОВЛЕНИЕ ПРОФИЛЯ
+// ПРОФИЛЬ
 // =============================================
 app.post('/api/profile/update', (req, res) => {
   try {
     const { token, display_name, bio, username: newUsername } = req.body;
-    
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'Токен обязателен' });
-    }
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
 
-    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
-    if (!session) {
-      return res.status(401).json({ success: false, error: 'Токен недействителен' });
-    }
-
-    // Проверки
-    const trimmedDisplayName = (display_name || '').trim().substring(0, 50);
+    const trimmedDN = (display_name || '').trim().substring(0, 50);
     const trimmedBio = (bio || '').trim().substring(0, 200);
     
-    // Изменение юзернейма
-    if (newUsername && newUsername.trim() !== session.username) {
+    if (newUsername && newUsername.trim() !== currentUsername) {
       const trimmedNew = newUsername.trim();
-      const validationError = validateUsername(trimmedNew);
-      if (validationError) {
-        return res.status(400).json({ success: false, error: validationError });
-      }
+      const err = validateUsername(trimmedNew);
+      if (err) return res.status(400).json({ success: false, error: err });
 
       const exists = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedNew);
-      if (exists) {
-        return res.status(409).json({ success: false, error: 'Такой ник уже занят' });
-      }
+      if (exists) return res.status(409).json({ success: false, error: 'Такой ник уже занят' });
 
-      // Обновляем везде
       db.prepare('UPDATE users SET username = ?, display_name = ?, bio = ? WHERE username = ?')
-        .run(trimmedNew, trimmedDisplayName, trimmedBio, session.username);
-      db.prepare('UPDATE sessions SET username = ? WHERE username = ?').run(trimmedNew, session.username);
-      db.prepare('UPDATE messages SET sender_username = ? WHERE sender_username = ?').run(trimmedNew, session.username);
-      db.prepare('UPDATE messages SET receiver_username = ? WHERE receiver_username = ?').run(trimmedNew, session.username);
+        .run(trimmedNew, trimmedDN, trimmedBio, currentUsername);
+      db.prepare('UPDATE sessions SET username = ? WHERE username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE messages SET sender_username = ? WHERE sender_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE messages SET receiver_username = ? WHERE receiver_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE blocks SET blocker_username = ? WHERE blocker_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE blocks SET blocked_username = ? WHERE blocked_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE contact_names SET owner_username = ? WHERE owner_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE contact_names SET contact_username = ? WHERE contact_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE hidden_chats SET owner_username = ? WHERE owner_username = ?').run(trimmedNew, currentUsername);
+      db.prepare('UPDATE hidden_chats SET hidden_username = ? WHERE hidden_username = ?').run(trimmedNew, currentUsername);
     } else {
       db.prepare('UPDATE users SET display_name = ?, bio = ? WHERE username = ?')
-        .run(trimmedDisplayName, trimmedBio, session.username);
+        .run(trimmedDN, trimmedBio, currentUsername);
     }
 
-    const finalUsername = newUsername?.trim() || session.username;
-    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
-      .get(finalUsername);
-
-    console.log(`✏️ Профиль обновлён: ${finalUsername}`);
+    const finalUsername = newUsername?.trim() || currentUsername;
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?').get(finalUsername);
     res.json({ success: true, user });
-
   } catch (error) {
-    console.error('Ошибка обновления профиля:', error);
-    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// ОБНОВЛЕНИЕ АВАТАРА
-// =============================================
 app.post('/api/profile/avatar', (req, res) => {
   try {
     const { token, avatar } = req.body;
-    
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'Токен обязателен' });
-    }
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
 
-    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
-    if (!session) {
-      return res.status(401).json({ success: false, error: 'Токен недействителен' });
-    }
-
-    // Проверка размера (base64 может быть до ~700 КБ для 500 КБ файла)
     if (avatar && avatar.length > 800000) {
-      return res.status(400).json({ success: false, error: 'Аватар слишком большой (макс 500 КБ)' });
+      return res.status(400).json({ success: false, error: 'Аватар слишком большой' });
     }
 
-    db.prepare('UPDATE users SET avatar = ? WHERE username = ?').run(avatar || '', session.username);
-
-    console.log(`🖼️ Аватар обновлён: ${session.username}`);
+    db.prepare('UPDATE users SET avatar = ? WHERE username = ?').run(avatar || '', currentUsername);
     res.json({ success: true });
-
   } catch (error) {
-    console.error('Ошибка обновления аватара:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// СМЕНА ПАРОЛЯ
-// =============================================
 app.post('/api/profile/password', (req, res) => {
   try {
     const { token, oldPassword, newPassword } = req.body;
-    
-    if (!token || !oldPassword || !newPassword) {
-      return res.status(400).json({ success: false, error: 'Все поля обязательны' });
-    }
+    if (!oldPassword || !newPassword) return res.status(400).json({ success: false, error: 'Все поля обязательны' });
+    if (newPassword.length < 6) return res.status(400).json({ success: false, error: 'Новый пароль минимум 6 символов' });
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, error: 'Новый пароль минимум 6 символов' });
-    }
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
 
-    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
-    if (!session) {
-      return res.status(401).json({ success: false, error: 'Токен недействителен' });
-    }
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(currentUsername);
+    if (user.password !== oldPassword) return res.status(401).json({ success: false, error: 'Неверный текущий пароль' });
 
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(session.username);
-    if (user.password !== oldPassword) {
-      return res.status(401).json({ success: false, error: 'Неверный текущий пароль' });
-    }
-
-    db.prepare('UPDATE users SET password = ? WHERE username = ?').run(newPassword, session.username);
-
-    console.log(`🔒 Пароль изменён: ${session.username}`);
+    db.prepare('UPDATE users SET password = ? WHERE username = ?').run(newPassword, currentUsername);
     res.json({ success: true });
-
   } catch (error) {
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
 // =============================================
-// СПИСОК ЧАТОВ
+// БЛОКИРОВКИ
+// =============================================
+app.post('/api/block', (req, res) => {
+  try {
+    const { token, username } = req.body;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    if (!username || username === currentUsername) return res.status(400).json({ success: false, error: 'Некорректный пользователь' });
+
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+
+    db.prepare('INSERT OR IGNORE INTO blocks (blocker_username, blocked_username) VALUES (?, ?)')
+      .run(currentUsername, username);
+
+    console.log(`🚫 ${currentUsername} заблокировал ${username}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.post('/api/unblock', (req, res) => {
+  try {
+    const { token, username } = req.body;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+
+    db.prepare('DELETE FROM blocks WHERE blocker_username = ? AND blocked_username = ?')
+      .run(currentUsername, username);
+
+    console.log(`✅ ${currentUsername} разблокировал ${username}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.get('/api/blocked', (req, res) => {
+  try {
+    const { token } = req.query;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+
+    const blocked = db.prepare(`
+      SELECT u.id, u.username, u.display_name, u.avatar, b.created_at
+      FROM blocks b
+      JOIN users u ON u.username = b.blocked_username
+      WHERE b.blocker_username = ?
+      ORDER BY b.created_at DESC
+    `).all(currentUsername);
+
+    res.json({ success: true, blocked });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ЛОКАЛЬНЫЕ ИМЕНА
+// =============================================
+app.post('/api/contact-name', (req, res) => {
+  try {
+    const { token, contactUsername, customName } = req.body;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    if (!contactUsername) return res.status(400).json({ success: false, error: 'contactUsername обязателен' });
+
+    const trimmed = (customName || '').trim().substring(0, 50);
+    
+    if (!trimmed) {
+      db.prepare('DELETE FROM contact_names WHERE owner_username = ? AND contact_username = ?')
+        .run(currentUsername, contactUsername);
+    } else {
+      db.prepare(`
+        INSERT INTO contact_names (owner_username, contact_username, custom_name) VALUES (?, ?, ?)
+        ON CONFLICT(owner_username, contact_username) DO UPDATE SET custom_name = excluded.custom_name
+      `).run(currentUsername, contactUsername, trimmed);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// УДАЛЕНИЕ ЧАТА (у обоих + скрыть у себя)
+// =============================================
+app.post('/api/chat/delete', (req, res) => {
+  try {
+    const { token, username: partnerUsername } = req.body;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+
+    // Удаляем все сообщения между ними (Вариант Б — у обоих)
+    db.prepare(`
+      DELETE FROM messages 
+      WHERE (sender_username = ? AND receiver_username = ?) 
+         OR (sender_username = ? AND receiver_username = ?)
+    `).run(currentUsername, partnerUsername, partnerUsername, currentUsername);
+
+    console.log(`🗑️ ${currentUsername} удалил чат с ${partnerUsername}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ОЧИСТКА ИСТОРИИ (у обоих)
+// =============================================
+app.post('/api/chat/clear', (req, res) => {
+  try {
+    const { token, username: partnerUsername } = req.body;
+    const currentUsername = getUsernameByToken(token);
+    if (!currentUsername) return res.status(401).json({ success: false, error: 'Токен недействителен' });
+
+    db.prepare(`
+      DELETE FROM messages 
+      WHERE (sender_username = ? AND receiver_username = ?) 
+         OR (sender_username = ? AND receiver_username = ?)
+    `).run(currentUsername, partnerUsername, partnerUsername, currentUsername);
+
+    console.log(`🧹 ${currentUsername} очистил историю с ${partnerUsername}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// СПИСОК ЧАТОВ (с учётом блокировок и локальных имён)
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
     const currentUsername = req.query.currentUsername;
-    if (!currentUsername) {
-      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
-    }
+    if (!currentUsername) return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
 
     const users = db.prepare(`
       SELECT DISTINCT u.id, u.username, u.display_name, u.avatar, u.bio, u.created_at
@@ -354,7 +439,19 @@ app.get('/api/users', (req, res) => {
       ORDER BY u.username ASC
     `).all(currentUsername, currentUsername, currentUsername);
 
-    const usersWithUnread = users.map(user => {
+    // Получаем локальные имена
+    const contactNames = {};
+    db.prepare('SELECT contact_username, custom_name FROM contact_names WHERE owner_username = ?')
+      .all(currentUsername)
+      .forEach(row => { contactNames[row.contact_username] = row.custom_name; });
+
+    // Заблокированные (кого я заблокировал)
+    const iBlocked = new Set(
+      db.prepare('SELECT blocked_username FROM blocks WHERE blocker_username = ?')
+        .all(currentUsername).map(r => r.blocked_username)
+    );
+
+    const usersWithData = users.map(user => {
       const unreadCount = db.prepare(`
         SELECT COUNT(*) as count FROM messages 
         WHERE sender_username = ? AND receiver_username = ? AND is_read = 0
@@ -368,6 +465,8 @@ app.get('/api/users', (req, res) => {
 
       return {
         ...user,
+        custom_name: contactNames[user.username] || null,
+        is_blocked: iBlocked.has(user.username),
         unreadCount: unreadCount?.count || 0,
         lastMessage: lastMessage?.message_text || null,
         lastMessageTime: lastMessage?.timestamp || null,
@@ -375,7 +474,7 @@ app.get('/api/users', (req, res) => {
       };
     });
 
-    usersWithUnread.sort((a, b) => {
+    usersWithData.sort((a, b) => {
       if (a.lastMessageTime && b.lastMessageTime) {
         return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
       }
@@ -384,16 +483,13 @@ app.get('/api/users', (req, res) => {
       return 0;
     });
 
-    res.json({ success: true, users: usersWithUnread });
+    res.json({ success: true, users: usersWithData });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
-// =============================================
-// НЕПРОЧИТАННЫЕ
-// =============================================
 app.get('/api/unread-count', (req, res) => {
   try {
     const { username } = req.query;
@@ -411,18 +507,14 @@ app.get('/api/unread-count', (req, res) => {
 });
 
 // =============================================
-// ПОИСК
+// ПОИСК (не показывает тех кто тебя заблокировал)
 // =============================================
 app.get('/api/search', (req, res) => {
   try {
     const { query, currentUsername } = req.query;
-    if (!currentUsername) {
-      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
-    }
+    if (!currentUsername) return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
 
-    if (!query || query.trim().length < 1) {
-      return res.json({ success: true, users: [] });
-    }
+    if (!query || query.trim().length < 1) return res.json({ success: true, users: [] });
 
     const searchTerm = `%${query.trim()}%`;
     const users = db.prepare(`
@@ -432,9 +524,25 @@ app.get('/api/search', (req, res) => {
       LIMIT 20
     `).all(searchTerm, searchTerm, currentUsername);
 
-    res.json({ success: true, users });
+    // Локальные имена
+    const contactNames = {};
+    db.prepare('SELECT contact_username, custom_name FROM contact_names WHERE owner_username = ?')
+      .all(currentUsername)
+      .forEach(row => { contactNames[row.contact_username] = row.custom_name; });
+
+    const iBlocked = new Set(
+      db.prepare('SELECT blocked_username FROM blocks WHERE blocker_username = ?')
+        .all(currentUsername).map(r => r.blocked_username)
+    );
+
+    const enriched = users.map(u => ({
+      ...u,
+      custom_name: contactNames[u.username] || null,
+      is_blocked: iBlocked.has(u.username)
+    }));
+
+    res.json({ success: true, users: enriched });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -474,8 +582,24 @@ app.post('/api/messages', (req, res) => {
     }
 
     const receiver = db.prepare('SELECT * FROM users WHERE username = ?').get(receiverUsername);
-    if (!receiver) {
-      return res.status(404).json({ success: false, error: 'Получатель не найден' });
+    if (!receiver) return res.status(404).json({ success: false, error: 'Получатель не найден' });
+
+    // Проверка: заблокировал ли меня получатель
+    const iAmBlocked = db.prepare(
+      'SELECT 1 FROM blocks WHERE blocker_username = ? AND blocked_username = ?'
+    ).get(receiverUsername, senderUsername);
+    
+    if (iAmBlocked) {
+      return res.status(403).json({ success: false, error: 'Пользователь заблокировал вас' });
+    }
+
+    // Проверка: я заблокировал получателя
+    const iBlockedThem = db.prepare(
+      'SELECT 1 FROM blocks WHERE blocker_username = ? AND blocked_username = ?'
+    ).get(senderUsername, receiverUsername);
+    
+    if (iBlockedThem) {
+      return res.status(403).json({ success: false, error: 'Вы заблокировали этого пользователя. Разблокируйте, чтобы писать.' });
     }
 
     const result = db.prepare(`
@@ -496,12 +620,22 @@ app.post('/api/messages', (req, res) => {
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
-    const { username } = req.query;
+    const { username, currentUsername } = req.query;
     if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
 
-    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
-      .get(username);
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?').get(username);
     if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+
+    // Если известен currentUsername — добавим локальное имя и статус блокировки
+    if (currentUsername) {
+      const cn = db.prepare('SELECT custom_name FROM contact_names WHERE owner_username = ? AND contact_username = ?')
+        .get(currentUsername, username);
+      user.custom_name = cn?.custom_name || null;
+
+      const blocked = db.prepare('SELECT 1 FROM blocks WHERE blocker_username = ? AND blocked_username = ?')
+        .get(currentUsername, username);
+      user.is_blocked = !!blocked;
+    }
 
     res.json({ success: true, user });
   } catch (error) {
@@ -521,9 +655,8 @@ app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
-  console.log('  👤 Профили: ВКЛ');
-  console.log('  🖼️  Аватарки: ВКЛ');
-  console.log('  👥 Мульти-аккаунты: ВКЛ');
+  console.log('  👤 Профили | 🖼️ Аватарки | 👥 Мульти-акки');
+  console.log('  🚫 Блокировки | ✏️ Локальные имена');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

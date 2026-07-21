@@ -1,6 +1,6 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
-// Node.js + Express + SQLite + Telegram Bot
+// Node.js + Express + SQLite + Telegram Bot 2FA
 // =============================================
 
 const express = require('express');
@@ -32,11 +32,9 @@ const db = new Database('messenger.db');
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
     is_verified INTEGER DEFAULT 0,
-    verification_code TEXT,
     telegram_chat_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
@@ -45,19 +43,21 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_email TEXT NOT NULL,
-    receiver_email TEXT NOT NULL,
+    sender_username TEXT NOT NULL,
+    receiver_username TEXT NOT NULL,
     message_text TEXT NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_read INTEGER DEFAULT 0
   )
 `);
 
-// Таблица для связи Telegram → регистрация
+// Сессии Telegram (для регистрации и входа)
 db.exec(`
   CREATE TABLE IF NOT EXISTS telegram_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_token TEXT UNIQUE NOT NULL,
+    session_type TEXT NOT NULL,
+    username TEXT NOT NULL,
     telegram_chat_id TEXT,
     telegram_username TEXT,
     code TEXT,
@@ -67,15 +67,15 @@ db.exec(`
 `);
 
 db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_email);
-  CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_email);
+  CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
+  CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_username);
   CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 `);
 
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// TELEGRAM BOT (Long Polling)
+// TELEGRAM BOT
 // =============================================
 let lastUpdateId = 0;
 
@@ -119,42 +119,45 @@ async function pollTelegramUpdates() {
         if (update.message) {
           const chatId = update.message.chat.id.toString();
           const text = update.message.text || '';
-          const username = update.message.from.username || update.message.from.first_name || 'User';
+          const tgUsername = update.message.from.username || update.message.from.first_name || 'User';
 
-          console.log(`📨 Telegram от ${username} (${chatId}): ${text}`);
+          console.log(`📨 Telegram от ${tgUsername} (${chatId}): ${text}`);
 
-          // Обработка /start с параметром (токен сессии)
           if (text.startsWith('/start')) {
             const parts = text.split(' ');
             const sessionToken = parts[1];
 
             if (sessionToken) {
-              // Проверяем есть ли такая сессия
               const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
               
               if (session && !session.is_used) {
-                // Генерируем код и сохраняем в сессию
                 const code = generateCode();
                 db.prepare('UPDATE telegram_sessions SET telegram_chat_id = ?, telegram_username = ?, code = ? WHERE session_token = ?')
-                  .run(chatId, username, code, sessionToken);
+                  .run(chatId, tgUsername, code, sessionToken);
+
+                const actionText = session.session_type === 'register' 
+                  ? 'регистрации нового аккаунта' 
+                  : 'входа в аккаунт';
 
                 await sendTelegramMessage(chatId, 
-                  `👋 Привет, <b>${username}</b>!\n\n` +
-                  `Твой код для подтверждения регистрации:\n\n` +
+                  `👋 Привет, <b>${tgUsername}</b>!\n\n` +
+                  `Ты запросил код для <b>${actionText}</b>\n` +
+                  `Логин: <code>${session.username}</code>\n\n` +
+                  `Твой код:\n\n` +
                   `<code>${code}</code>\n\n` +
-                  `Введи этот код на сайте, чтобы завершить регистрацию.`
+                  `⚠️ Никому не сообщай этот код!`
                 );
               } else {
                 await sendTelegramMessage(chatId, 
                   `⚠️ Ссылка недействительна или уже использована.\n\n` +
-                  `Вернись на сайт и начни регистрацию заново.`
+                  `Вернись на сайт и начни заново.`
                 );
               }
             } else {
               await sendTelegramMessage(chatId, 
                 `👋 Привет!\n\n` +
-                `Я бот для регистрации в мессенджере.\n\n` +
-                `Чтобы получить код подтверждения, начни регистрацию на сайте и перейди по ссылке которая появится.`
+                `Я бот для регистрации и входа в мессенджер.\n\n` +
+                `Чтобы получить код — начни регистрацию или вход на сайте и перейди по ссылке.`
               );
             }
           }
@@ -165,56 +168,59 @@ async function pollTelegramUpdates() {
     console.error('Ошибка polling Telegram:', error.message);
   }
   
-  // Повторяем через 1 секунду
   setTimeout(pollTelegramUpdates, 1000);
 }
 
-// Запускаем polling
 pollTelegramUpdates();
-console.log('🤖 Telegram бот запущен');
+console.log('🤖 Telegram бот запущен: @' + TELEGRAM_BOT_USERNAME);
 
 // =============================================
-// ЭНДПОИНТ: НАЧАТЬ РЕГИСТРАЦИЮ (создать сессию)
+// ЭНДПОИНТ: НАЧАТЬ РЕГИСТРАЦИЮ
 // =============================================
 app.post('/register/start', (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, password } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({ success: false, error: 'Все поля обязательны' });
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
+    }
+
+    if (username.length < 3) {
+      return res.status(400).json({ success: false, error: 'Ник должен быть минимум 3 символа' });
     }
 
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
     }
 
-    const existingUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    // Проверка на допустимые символы в нике
+    if (!/^[a-zA-Z0-9_а-яА-Я]+$/.test(username)) {
+      return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
+    }
+
+    const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     
     if (existingUser && existingUser.is_verified) {
-      return res.status(409).json({ success: false, error: 'Пользователь с таким email уже существует' });
+      return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
     }
 
-    // Создаём сессию Telegram
     const sessionToken = generateSessionToken();
-    db.prepare('INSERT INTO telegram_sessions (session_token) VALUES (?)').run(sessionToken);
+    db.prepare('INSERT INTO telegram_sessions (session_token, session_type, username) VALUES (?, ?, ?)')
+      .run(sessionToken, 'register', username);
 
-    // Сохраняем/обновляем пользователя (пока без подтверждения)
     if (existingUser && !existingUser.is_verified) {
-      db.prepare('UPDATE users SET username = ?, password = ?, verification_code = ? WHERE email = ?')
-        .run(username, password, sessionToken, email);
+      db.prepare('UPDATE users SET password = ? WHERE username = ?').run(password, username);
     } else {
-      db.prepare('INSERT INTO users (username, email, password, verification_code) VALUES (?, ?, ?, ?)')
-        .run(username, email, password, sessionToken);
+      db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, password);
     }
 
-    // Возвращаем ссылку на Telegram
     const telegramLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${sessionToken}`;
     
     res.json({ 
       success: true, 
       telegramLink,
       sessionToken,
-      email,
+      username,
       message: 'Перейди в Telegram, чтобы получить код'
     });
 
@@ -225,10 +231,79 @@ app.post('/register/start', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПРОВЕРИТЬ, ПРИШЁЛ ЛИ КОД
-// (фронтенд опрашивает раз в секунду)
+// ЭНДПОИНТ: НАЧАТЬ ВХОД
 // =============================================
-app.get('/register/check/:sessionToken', (req, res) => {
+app.post('/login/start', (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
+    }
+
+    if (user.password !== password) {
+      return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
+    }
+
+    if (!user.is_verified) {
+      return res.status(403).json({ success: false, error: 'Аккаунт не подтверждён. Сначала завершите регистрацию.' });
+    }
+
+    // Создаём сессию для входа
+    const sessionToken = generateSessionToken();
+    db.prepare('INSERT INTO telegram_sessions (session_token, session_type, username) VALUES (?, ?, ?)')
+      .run(sessionToken, 'login', username);
+
+    // Если у пользователя уже привязан Telegram — сразу отправляем код
+    if (user.telegram_chat_id) {
+      const code = generateCode();
+      db.prepare('UPDATE telegram_sessions SET telegram_chat_id = ?, code = ? WHERE session_token = ?')
+        .run(user.telegram_chat_id, code, sessionToken);
+
+      sendTelegramMessage(user.telegram_chat_id, 
+        `🔐 <b>Вход в аккаунт</b>\n\n` +
+        `Логин: <code>${username}</code>\n\n` +
+        `Код для входа:\n\n` +
+        `<code>${code}</code>\n\n` +
+        `⚠️ Если это не ты — смени пароль!`
+      ).catch(() => {});
+
+      res.json({ 
+        success: true, 
+        sessionToken,
+        username,
+        alreadyLinked: true,
+        message: 'Код отправлен в Telegram'
+      });
+    } else {
+      // Если Telegram не привязан — даём ссылку
+      const telegramLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${sessionToken}`;
+      res.json({ 
+        success: true, 
+        telegramLink,
+        sessionToken,
+        username,
+        alreadyLinked: false,
+        message: 'Перейди в Telegram, чтобы получить код'
+      });
+    }
+
+  } catch (error) {
+    console.error('Ошибка входа:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+  }
+});
+
+// =============================================
+// ЭНДПОИНТ: ПРОВЕРИТЬ ПРИШЁЛ ЛИ КОД
+// =============================================
+app.get('/session/check/:sessionToken', (req, res) => {
   try {
     const { sessionToken } = req.params;
     const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
@@ -252,30 +327,27 @@ app.get('/register/check/:sessionToken', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ВЕРИФИКАЦИЯ КОДА
+// ЭНДПОИНТ: ПОДТВЕРДИТЬ КОД (регистрация или вход)
 // =============================================
 app.post('/verify', (req, res) => {
   try {
-    const { email, code } = req.body;
+    const { sessionToken, code } = req.body;
 
-    if (!email || !code) {
-      return res.status(400).json({ success: false, error: 'Email и код обязательны' });
+    if (!sessionToken || !code) {
+      return res.status(400).json({ success: false, error: 'Сессия и код обязательны' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
 
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+    if (!session) {
+      return res.status(404).json({ success: false, error: 'Сессия не найдена' });
     }
 
-    if (user.is_verified) {
-      return res.status(400).json({ success: false, error: 'Аккаунт уже подтверждён' });
+    if (session.is_used) {
+      return res.status(400).json({ success: false, error: 'Сессия уже использована' });
     }
 
-    // Ищем сессию по session_token (сохранён в verification_code)
-    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(user.verification_code);
-
-    if (!session || !session.code) {
+    if (!session.code) {
       return res.status(400).json({ success: false, error: 'Сначала получи код в Telegram' });
     }
 
@@ -283,54 +355,37 @@ app.post('/verify', (req, res) => {
       return res.status(400).json({ success: false, error: 'Неверный код' });
     }
 
-    // Помечаем сессию как использованную и активируем пользователя
-    db.prepare('UPDATE telegram_sessions SET is_used = 1 WHERE session_token = ?').run(user.verification_code);
-    db.prepare('UPDATE users SET is_verified = 1, verification_code = NULL, telegram_chat_id = ? WHERE email = ?')
-      .run(session.telegram_chat_id, email);
-    
-    console.log(`✅ Аккаунт ${email} подтверждён через Telegram`);
-    res.json({ success: true, message: 'Аккаунт успешно подтверждён!' });
+    // Помечаем сессию как использованную
+    db.prepare('UPDATE telegram_sessions SET is_used = 1 WHERE session_token = ?').run(sessionToken);
+
+    if (session.session_type === 'register') {
+      // Регистрация: активируем аккаунт и привязываем Telegram
+      db.prepare('UPDATE users SET is_verified = 1, telegram_chat_id = ? WHERE username = ?')
+        .run(session.telegram_chat_id, session.username);
+      
+      console.log(`✅ Аккаунт ${session.username} зарегистрирован через Telegram`);
+      
+      const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+      res.json({ 
+        success: true, 
+        type: 'register',
+        message: 'Аккаунт создан!',
+        user
+      });
+    } else {
+      // Вход
+      const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+      console.log(`🔑 Пользователь ${session.username} вошёл через Telegram`);
+      res.json({ 
+        success: true, 
+        type: 'login',
+        message: 'Вход выполнен!',
+        user
+      });
+    }
 
   } catch (error) {
     console.error('Ошибка верификации:', error);
-    res.status(500).json({ success: false, error: 'Ошибка сервера' });
-  }
-});
-
-// =============================================
-// ЭНДПОИНТ: ВХОД
-// =============================================
-app.post('/login', (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ success: false, error: 'Email и пароль обязательны' });
-    }
-
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-
-    if (!user) {
-      return res.status(401).json({ success: false, error: 'Неверный email или пароль' });
-    }
-
-    if (user.password !== password) {
-      return res.status(401).json({ success: false, error: 'Неверный email или пароль' });
-    }
-
-    if (!user.is_verified) {
-      return res.status(403).json({ success: false, error: 'Аккаунт не подтверждён' });
-    }
-
-    console.log(`🔑 Пользователь ${email} вошёл в систему`);
-    res.json({ 
-      success: true, 
-      message: 'Вход выполнен успешно!',
-      user: { id: user.id, username: user.username, email: user.email }
-    });
-
-  } catch (error) {
-    console.error('Ошибка входа:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -340,36 +395,36 @@ app.post('/login', (req, res) => {
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
-    const currentEmail = req.query.currentEmail;
-    if (!currentEmail) {
-      return res.status(400).json({ success: false, error: 'currentEmail обязателен' });
+    const currentUsername = req.query.currentUsername;
+    if (!currentUsername) {
+      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
     }
 
     const users = db.prepare(`
-      SELECT id, username, email, created_at 
+      SELECT id, username, created_at 
       FROM users 
-      WHERE is_verified = 1 AND email != ?
+      WHERE is_verified = 1 AND username != ?
       ORDER BY username ASC
-    `).all(currentEmail);
+    `).all(currentUsername);
 
     const usersWithUnread = users.map(user => {
       const unreadCount = db.prepare(`
         SELECT COUNT(*) as count FROM messages 
-        WHERE sender_email = ? AND receiver_email = ? AND is_read = 0
-      `).get(user.email, currentEmail);
+        WHERE sender_username = ? AND receiver_username = ? AND is_read = 0
+      `).get(user.username, currentUsername);
 
       const lastMessage = db.prepare(`
-        SELECT message_text, timestamp, sender_email FROM messages 
-        WHERE (sender_email = ? AND receiver_email = ?) OR (sender_email = ? AND receiver_email = ?)
+        SELECT message_text, timestamp, sender_username FROM messages 
+        WHERE (sender_username = ? AND receiver_username = ?) OR (sender_username = ? AND receiver_username = ?)
         ORDER BY timestamp DESC LIMIT 1
-      `).get(user.email, currentEmail, currentEmail, user.email);
+      `).get(user.username, currentUsername, currentUsername, user.username);
 
       return {
         ...user,
         unreadCount: unreadCount?.count || 0,
         lastMessage: lastMessage?.message_text || null,
         lastMessageTime: lastMessage?.timestamp || null,
-        lastMessageIsMine: lastMessage?.sender_email === currentEmail
+        lastMessageIsMine: lastMessage?.sender_username === currentUsername
       };
     });
 
@@ -393,21 +448,21 @@ app.get('/api/users', (req, res) => {
 // =============================================
 app.get('/api/messages', (req, res) => {
   try {
-    const { with: partnerEmail, currentEmail } = req.query;
-    if (!partnerEmail || !currentEmail) {
-      return res.status(400).json({ success: false, error: 'with и currentEmail обязательны' });
+    const { with: partnerUsername, currentUsername } = req.query;
+    if (!partnerUsername || !currentUsername) {
+      return res.status(400).json({ success: false, error: 'with и currentUsername обязательны' });
     }
 
     const messages = db.prepare(`
-      SELECT id, sender_email, receiver_email, message_text, timestamp FROM messages 
-      WHERE (sender_email = ? AND receiver_email = ?) OR (sender_email = ? AND receiver_email = ?)
+      SELECT id, sender_username, receiver_username, message_text, timestamp FROM messages 
+      WHERE (sender_username = ? AND receiver_username = ?) OR (sender_username = ? AND receiver_username = ?)
       ORDER BY timestamp ASC
-    `).all(currentEmail, partnerEmail, partnerEmail, currentEmail);
+    `).all(currentUsername, partnerUsername, partnerUsername, currentUsername);
 
     db.prepare(`
       UPDATE messages SET is_read = 1 
-      WHERE sender_email = ? AND receiver_email = ? AND is_read = 0
-    `).run(partnerEmail, currentEmail);
+      WHERE sender_username = ? AND receiver_username = ? AND is_read = 0
+    `).run(partnerUsername, currentUsername);
 
     res.json({ success: true, messages });
   } catch (error) {
@@ -420,27 +475,27 @@ app.get('/api/messages', (req, res) => {
 // =============================================
 app.post('/api/messages', (req, res) => {
   try {
-    const { senderEmail, receiverEmail, messageText } = req.body;
-    if (!senderEmail || !receiverEmail || !messageText || !messageText.trim()) {
+    const { senderUsername, receiverUsername, messageText } = req.body;
+    if (!senderUsername || !receiverUsername || !messageText || !messageText.trim()) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
 
-    const receiver = db.prepare('SELECT * FROM users WHERE email = ? AND is_verified = 1').get(receiverEmail);
+    const receiver = db.prepare('SELECT * FROM users WHERE username = ? AND is_verified = 1').get(receiverUsername);
     if (!receiver) {
       return res.status(404).json({ success: false, error: 'Получатель не найден' });
     }
 
     const result = db.prepare(`
-      INSERT INTO messages (sender_email, receiver_email, message_text) VALUES (?, ?, ?)
-    `).run(senderEmail, receiverEmail, messageText.trim());
+      INSERT INTO messages (sender_username, receiver_username, message_text) VALUES (?, ?, ?)
+    `).run(senderUsername, receiverUsername, messageText.trim());
 
     const newMessage = db.prepare('SELECT * FROM messages WHERE id = ?').get(result.lastInsertRowid);
-    console.log(`💬 ${senderEmail} → ${receiverEmail}: ${messageText.substring(0, 50)}`);
+    console.log(`💬 ${senderUsername} → ${receiverUsername}: ${messageText.substring(0, 50)}`);
     
-    // Уведомление получателю в Telegram (если у него привязан)
+    // Уведомление в Telegram получателю
     if (receiver.telegram_chat_id) {
       sendTelegramMessage(receiver.telegram_chat_id, 
-        `💬 <b>Новое сообщение</b> от ${senderEmail}:\n\n${messageText.trim()}`
+        `💬 <b>Новое сообщение</b> от <b>${senderUsername}</b>:\n\n${messageText.trim()}`
       ).catch(() => {});
     }
 
@@ -455,10 +510,10 @@ app.post('/api/messages', (req, res) => {
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
-    const { email } = req.query;
-    if (!email) return res.status(400).json({ success: false, error: 'email обязателен' });
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
 
-    const user = db.prepare('SELECT id, username, email FROM users WHERE email = ? AND is_verified = 1').get(email);
+    const user = db.prepare('SELECT id, username FROM users WHERE username = ? AND is_verified = 1').get(username);
     if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
 
     res.json({ success: true, user });
@@ -486,6 +541,7 @@ app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
   console.log('  🤖 Telegram Bot: @' + TELEGRAM_BOT_USERNAME);
+  console.log('  🔐 Авторизация: 2FA через Telegram');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

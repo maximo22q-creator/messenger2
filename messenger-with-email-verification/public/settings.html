@@ -1,1 +1,538 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Настройки | Messenger</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      color: #f8fafc;
+      padding: 20px;
+    }
+    .container { max-width: 600px; margin: 0 auto; }
+    .header {
+      display: flex; align-items: center; gap: 16px;
+      margin-bottom: 24px; padding: 16px;
+      background: rgba(30, 41, 59, 0.9);
+      border-radius: 16px;
+      border: 1px solid rgba(71, 85, 105, 0.5);
+    }
+    .back-btn {
+      width: 40px; height: 40px;
+      background: rgba(71, 85, 105, 0.3);
+      border: none; border-radius: 10px;
+      color: #f8fafc; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    .back-btn:hover { background: rgba(71, 85, 105, 0.5); }
+    .header h1 { font-size: 22px; font-weight: 700; }
+    
+    .card {
+      background: rgba(30, 41, 59, 0.9);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 20px; padding: 32px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 16px; font-weight: 600;
+      color: #94a3b8; text-transform: uppercase;
+      letter-spacing: 1px; margin-bottom: 20px;
+    }
 
+    /* Аватар */
+    .avatar-section {
+      display: flex; flex-direction: column; align-items: center;
+      margin-bottom: 24px;
+    }
+    .avatar-preview {
+      width: 140px; height: 140px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 48px; font-weight: 700; color: white;
+      margin-bottom: 16px;
+      overflow: hidden;
+      border: 4px solid rgba(99, 102, 241, 0.3);
+      position: relative;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .avatar-preview:hover { transform: scale(1.03); }
+    .avatar-preview img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .avatar-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.2s;
+      font-size: 14px;
+    }
+    .avatar-preview:hover .avatar-overlay { opacity: 1; }
+    .avatar-buttons {
+      display: flex; gap: 10px;
+    }
+    .btn-small {
+      padding: 8px 16px;
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      border-radius: 10px;
+      color: #a5b4fc;
+      font-size: 13px; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-small:hover { background: rgba(99, 102, 241, 0.3); }
+    .btn-small.danger { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #f87171; }
+    .btn-small.danger:hover { background: rgba(239, 68, 68, 0.2); }
+
+    /* Форма */
+    .form-group { margin-bottom: 20px; }
+    .form-group label {
+      display: block; color: #cbd5e1; font-size: 14px;
+      font-weight: 500; margin-bottom: 8px;
+    }
+    .form-group .hint {
+      font-size: 12px; color: #64748b; margin-top: 6px;
+    }
+    .form-group input, .form-group textarea {
+      width: 100%; padding: 14px 18px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 12px; color: #fff; font-size: 15px;
+      transition: all 0.3s ease;
+      font-family: inherit;
+    }
+    .form-group textarea {
+      resize: vertical; min-height: 80px; max-height: 200px;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      outline: none; border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    }
+    .char-counter {
+      text-align: right; font-size: 11px;
+      color: #64748b; margin-top: 4px;
+    }
+
+    /* Кнопки */
+    .btn {
+      width: 100%; padding: 14px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border: none; border-radius: 12px; color: #fff;
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 8px 20px -8px rgba(99, 102, 241, 0.5);
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -8px rgba(99, 102, 241, 0.6); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .btn-danger {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      box-shadow: 0 8px 20px -8px rgba(239, 68, 68, 0.5);
+    }
+
+    .error-box, .success-box {
+      padding: 12px 16px; border-radius: 12px;
+      margin-bottom: 16px; font-size: 14px; text-align: center;
+      display: none;
+    }
+    .error-box { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; }
+    .success-box { background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); color: #4ade80; }
+
+    #fileInput { display: none; }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 600px) {
+      .card { padding: 20px; }
+      .avatar-preview { width: 110px; height: 110px; font-size: 40px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <button class="back-btn" onclick="goBack()">
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h1>Настройки профиля</h1>
+    </div>
+
+    <div class="error-box" id="errorBox"></div>
+    <div class="success-box" id="successBox"></div>
+
+    <!-- Аватар -->
+    <div class="card">
+      <h2>Фотография</h2>
+      <div class="avatar-section">
+        <div class="avatar-preview" id="avatarPreview" onclick="document.getElementById('fileInput').click()">
+          <span id="avatarInitials">?</span>
+          <div class="avatar-overlay">📷 Изменить</div>
+        </div>
+        <input type="file" id="fileInput" accept="image/*" onchange="handleFileSelect(event)">
+        <div class="avatar-buttons">
+          <button class="btn-small" onclick="document.getElementById('fileInput').click()">
+            📷 Загрузить фото
+          </button>
+          <button class="btn-small danger" id="removeAvatarBtn" onclick="removeAvatar()" style="display: none;">
+            🗑 Удалить
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Профиль -->
+    <div class="card">
+      <h2>Основное</h2>
+      
+      <div class="form-group">
+        <label for="displayName">Имя</label>
+        <input type="text" id="displayName" placeholder="Твоё имя" maxlength="50">
+        <div class="char-counter"><span id="nameCounter">0</span>/50</div>
+      </div>
+
+      <div class="form-group">
+        <label for="username">Ник (юзернейм)</label>
+        <input type="text" id="username" placeholder="username" maxlength="20">
+        <div class="hint">Только буквы, цифры и _</div>
+      </div>
+
+      <div class="form-group">
+        <label for="bio">О себе</label>
+        <textarea id="bio" placeholder="Расскажи о себе..." maxlength="200"></textarea>
+        <div class="char-counter"><span id="bioCounter">0</span>/200</div>
+      </div>
+
+      <button class="btn" id="saveBtn" onclick="saveProfile()">💾 Сохранить изменения</button>
+    </div>
+
+    <!-- Пароль -->
+    <div class="card">
+      <h2>Безопасность</h2>
+      
+      <div class="form-group">
+        <label for="oldPassword">Текущий пароль</label>
+        <input type="password" id="oldPassword" placeholder="Введи текущий пароль">
+      </div>
+
+      <div class="form-group">
+        <label for="newPassword">Новый пароль</label>
+        <input type="password" id="newPassword" placeholder="Минимум 6 символов" minlength="6">
+      </div>
+
+      <button class="btn" id="passwordBtn" onclick="changePassword()">🔒 Изменить пароль</button>
+    </div>
+  </div>
+
+  <script>
+    let currentAvatar = '';
+
+    function getActiveAccount() {
+      const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
+      const activeUsername = localStorage.getItem('activeUsername');
+      return accounts.find(a => a.username === activeUsername) || null;
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg;
+      box.style.display = 'block';
+      document.getElementById('successBox').style.display = 'none';
+      setTimeout(() => box.style.display = 'none', 5000);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function showSuccess(msg) {
+      const box = document.getElementById('successBox');
+      box.textContent = msg;
+      box.style.display = 'block';
+      document.getElementById('errorBox').style.display = 'none';
+      setTimeout(() => box.style.display = 'none', 3000);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function goBack() {
+      window.location.href = 'chat.html';
+    }
+
+    function getInitials(name) {
+      if (!name) return '?';
+      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    }
+
+    function renderAvatar() {
+      const preview = document.getElementById('avatarPreview');
+      const initials = document.getElementById('avatarInitials');
+      const overlay = preview.querySelector('.avatar-overlay');
+      
+      // Убираем старую картинку
+      const oldImg = preview.querySelector('img');
+      if (oldImg) oldImg.remove();
+
+      if (currentAvatar) {
+        const img = document.createElement('img');
+        img.src = currentAvatar;
+        preview.insertBefore(img, overlay);
+        initials.style.display = 'none';
+        document.getElementById('removeAvatarBtn').style.display = 'inline-block';
+      } else {
+        initials.style.display = 'block';
+        initials.textContent = getInitials(document.getElementById('displayName').value || document.getElementById('username').value);
+        document.getElementById('removeAvatarBtn').style.display = 'none';
+      }
+    }
+
+    // Загрузка данных
+    (async () => {
+      const account = getActiveAccount();
+      if (!account) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      try {
+        const r = await fetch('/api/auth/check', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ token: account.token })
+        });
+        const d = await r.json();
+        
+        if (!d.success) {
+          localStorage.clear();
+          window.location.href = 'login.html';
+          return;
+        }
+
+        document.getElementById('displayName').value = d.user.display_name || '';
+        document.getElementById('username').value = d.user.username;
+        document.getElementById('bio').value = d.user.bio || '';
+        currentAvatar = d.user.avatar || '';
+        
+        updateCounters();
+        renderAvatar();
+      } catch(e) {
+        showError('Ошибка загрузки профиля');
+      }
+    })();
+
+    function updateCounters() {
+      document.getElementById('nameCounter').textContent = document.getElementById('displayName').value.length;
+      document.getElementById('bioCounter').textContent = document.getElementById('bio').value.length;
+    }
+
+    document.getElementById('displayName').addEventListener('input', () => {
+      updateCounters();
+      renderAvatar();
+    });
+    document.getElementById('bio').addEventListener('input', updateCounters);
+    document.getElementById('username').addEventListener('input', renderAvatar);
+
+    // ===== ЗАГРУЗКА АВАТАРА С СЖАТИЕМ =====
+    async function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        showError('Выбери картинку!');
+        return;
+      }
+
+      try {
+        showSuccess('⏳ Обрабатываем фото...');
+        const compressed = await compressImage(file, 500 * 1024); // 500 КБ
+        currentAvatar = compressed;
+        renderAvatar();
+        
+        // Сразу загружаем на сервер
+        await uploadAvatar(compressed);
+      } catch(e) {
+        showError('Ошибка обработки: ' + e.message);
+      }
+    }
+
+    // Сжатие изображения до нужного размера
+    function compressImage(file, maxSizeBytes) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Максимальный размер 500x500
+            let width = img.width;
+            let height = img.height;
+            const maxDim = 500;
+
+            if (width > height) {
+              if (width > maxDim) {
+                height = Math.round(height * maxDim / width);
+                width = maxDim;
+              }
+            } else {
+              if (height > maxDim) {
+                width = Math.round(width * maxDim / height);
+                height = maxDim;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Итеративное сжатие
+            let quality = 0.9;
+            let dataUrl = canvas.toDataURL('image/jpeg', quality);
+            
+            while (dataUrl.length * 0.75 > maxSizeBytes && quality > 0.1) {
+              quality -= 0.1;
+              dataUrl = canvas.toDataURL('image/jpeg', quality);
+            }
+
+            resolve(dataUrl);
+          };
+          img.onerror = () => reject(new Error('Не удалось загрузить картинку'));
+          img.src = e.target.result;
+        };
+        reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function uploadAvatar(avatar) {
+      const account = getActiveAccount();
+      try {
+        const r = await fetch('/api/profile/avatar', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ token: account.token, avatar })
+        });
+        const d = await r.json();
+        if (d.success) {
+          showSuccess('✅ Фото обновлено!');
+        } else {
+          showError(d.error || 'Ошибка загрузки');
+        }
+      } catch(e) {
+        showError('Ошибка сети');
+      }
+    }
+
+    async function removeAvatar() {
+      if (!confirm('Удалить фото профиля?')) return;
+      currentAvatar = '';
+      renderAvatar();
+      await uploadAvatar('');
+    }
+
+    // ===== СОХРАНЕНИЕ ПРОФИЛЯ =====
+    async function saveProfile() {
+      const account = getActiveAccount();
+      const displayName = document.getElementById('displayName').value.trim();
+      const bio = document.getElementById('bio').value.trim();
+      const newUsername = document.getElementById('username').value.trim();
+
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Сохраняем...';
+
+      try {
+        const r = await fetch('/api/profile/update', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            token: account.token,
+            display_name: displayName,
+            bio: bio,
+            username: newUsername
+          })
+        });
+        const d = await r.json();
+
+        if (d.success) {
+          // Если ник изменился — обновить в localStorage
+          if (d.user.username !== account.username) {
+            const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
+            const idx = accounts.findIndex(a => a.username === account.username);
+            if (idx !== -1) {
+              accounts[idx].username = d.user.username;
+              localStorage.setItem('accounts', JSON.stringify(accounts));
+              localStorage.setItem('activeUsername', d.user.username);
+            }
+          }
+          showSuccess('✅ Профиль обновлён!');
+        } else {
+          showError(d.error || 'Ошибка сохранения');
+        }
+      } catch(e) {
+        showError('Ошибка сети');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 Сохранить изменения';
+      }
+    }
+
+    // ===== СМЕНА ПАРОЛЯ =====
+    async function changePassword() {
+      const account = getActiveAccount();
+      const oldPassword = document.getElementById('oldPassword').value;
+      const newPassword = document.getElementById('newPassword').value;
+
+      if (!oldPassword || !newPassword) {
+        showError('Заполни оба поля');
+        return;
+      }
+
+      const btn = document.getElementById('passwordBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Меняем...';
+
+      try {
+        const r = await fetch('/api/profile/password', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            token: account.token,
+            oldPassword,
+            newPassword
+          })
+        });
+        const d = await r.json();
+
+        if (d.success) {
+          showSuccess('✅ Пароль изменён!');
+          document.getElementById('oldPassword').value = '';
+          document.getElementById('newPassword').value = '';
+        } else {
+          showError(d.error || 'Ошибка');
+        }
+      } catch(e) {
+        showError('Ошибка сети');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔒 Изменить пароль';
+      }
+    }
+  </script>
+</body>
+</html>

@@ -5,278 +5,117 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Регистрация | Messenger</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       min-height: 100vh;
       background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
     }
-
-    .container {
-      width: 100%;
-      max-width: 420px;
-    }
-
+    .container { width: 100%; max-width: 420px; }
     .card {
       background: rgba(30, 41, 59, 0.9);
       backdrop-filter: blur(20px);
       border: 1px solid rgba(71, 85, 105, 0.5);
-      border-radius: 24px;
-      padding: 40px;
+      border-radius: 24px; padding: 40px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     }
-
-    .logo {
-      text-align: center;
-      margin-bottom: 32px;
-    }
-
+    .logo { text-align: center; margin-bottom: 32px; }
     .logo-icon {
-      width: 72px;
-      height: 72px;
+      width: 72px; height: 72px;
       background: linear-gradient(135deg, #6366f1, #a855f7);
       border-radius: 20px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
-      font-size: 32px;
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-bottom: 16px; font-size: 32px;
     }
-
-    .logo h1 {
-      color: #fff;
-      font-size: 28px;
-      font-weight: 700;
-    }
-
-    .logo p {
-      color: #94a3b8;
-      margin-top: 8px;
-      font-size: 14px;
-    }
-
+    .logo h1 { color: #fff; font-size: 28px; font-weight: 700; }
+    .logo p { color: #94a3b8; margin-top: 8px; font-size: 14px; }
     .error-box {
       background: rgba(239, 68, 68, 0.1);
       border: 1px solid rgba(239, 68, 68, 0.3);
-      border-radius: 12px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
-      display: none;
+      border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; display: none;
     }
-
-    .error-box p {
-      color: #f87171;
-      font-size: 14px;
-      text-align: center;
-    }
-
+    .error-box p { color: #f87171; font-size: 14px; text-align: center; }
     .success-box {
       background: rgba(34, 197, 94, 0.1);
       border: 1px solid rgba(34, 197, 94, 0.3);
-      border-radius: 12px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
-      display: none;
+      border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; display: none;
     }
-
-    .success-box p {
-      color: #4ade80;
-      font-size: 14px;
-      text-align: center;
-    }
-
-    .form-group {
-      margin-bottom: 20px;
-    }
-
+    .success-box p { color: #4ade80; font-size: 14px; text-align: center; }
+    .form-group { margin-bottom: 20px; }
     .form-group label {
-      display: block;
-      color: #cbd5e1;
-      font-size: 14px;
-      font-weight: 500;
-      margin-bottom: 8px;
+      display: block; color: #cbd5e1; font-size: 14px; font-weight: 500; margin-bottom: 8px;
     }
-
     .form-group input {
-      width: 100%;
-      padding: 14px 18px;
+      width: 100%; padding: 14px 18px;
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(71, 85, 105, 0.5);
-      border-radius: 12px;
-      color: #fff;
-      font-size: 16px;
+      border-radius: 12px; color: #fff; font-size: 16px;
       transition: all 0.3s ease;
     }
-
-    .form-group input::placeholder {
-      color: #64748b;
-    }
-
+    .form-group input::placeholder { color: #64748b; }
     .form-group input:focus {
-      outline: none;
-      border-color: #6366f1;
+      outline: none; border-color: #6366f1;
       box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
     }
-
     .btn {
-      width: 100%;
-      padding: 16px;
+      width: 100%; padding: 16px;
       background: linear-gradient(135deg, #6366f1, #a855f7);
-      border: none;
-      border-radius: 12px;
-      color: #fff;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
+      border: none; border-radius: 12px; color: #fff;
+      font-size: 16px; font-weight: 600; cursor: pointer;
       transition: all 0.3s ease;
       box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.5);
-      text-decoration: none;
-      display: inline-block;
-      text-align: center;
+      text-decoration: none; display: inline-block; text-align: center;
     }
-
-    .btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 15px 35px -10px rgba(99, 102, 241, 0.6);
-    }
-
-    .btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .btn-telegram {
-      background: linear-gradient(135deg, #0088cc, #00a8ff);
-      box-shadow: 0 10px 30px -10px rgba(0, 136, 204, 0.5);
-    }
-
-    .btn-telegram:hover {
-      box-shadow: 0 15px 35px -10px rgba(0, 136, 204, 0.6);
-    }
-
-    .btn-loading {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-    }
-
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 15px 35px -10px rgba(99, 102, 241, 0.6); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .btn-telegram { background: linear-gradient(135deg, #0088cc, #00a8ff); box-shadow: 0 10px 30px -10px rgba(0, 136, 204, 0.5); }
+    .btn-telegram:hover { box-shadow: 0 15px 35px -10px rgba(0, 136, 204, 0.6); }
+    .btn-loading { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
     .spinner {
-      width: 20px;
-      height: 20px;
+      width: 20px; height: 20px;
       border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      border-radius: 50%;
+      border-top-color: #fff; border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .footer-link {
-      text-align: center;
-      margin-top: 24px;
-      color: #94a3b8;
-      font-size: 14px;
-    }
-
-    .footer-link a {
-      color: #818cf8;
-      text-decoration: none;
-      font-weight: 500;
-      transition: color 0.3s;
-    }
-
-    .footer-link a:hover {
-      color: #a5b4fc;
-    }
-
-    .telegram-step {
-      display: none;
-      text-align: center;
-    }
-
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .footer-link { text-align: center; margin-top: 24px; color: #94a3b8; font-size: 14px; }
+    .footer-link a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.3s; }
+    .footer-link a:hover { color: #a5b4fc; }
+    .telegram-step { display: none; text-align: center; }
     .telegram-info {
       background: rgba(0, 136, 204, 0.1);
       border: 1px solid rgba(0, 136, 204, 0.3);
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 20px;
+      border-radius: 12px; padding: 16px; margin-bottom: 20px;
     }
-
-    .telegram-info p {
-      color: #7dd3fc;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
+    .telegram-info p { color: #7dd3fc; font-size: 14px; line-height: 1.5; }
     .code-input {
-      width: 100%;
-      padding: 16px;
+      width: 100%; padding: 16px;
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(71, 85, 105, 0.5);
-      border-radius: 12px;
-      color: #fff;
-      font-size: 24px;
-      text-align: center;
-      letter-spacing: 8px;
-      font-weight: 600;
-      margin-bottom: 20px;
+      border-radius: 12px; color: #fff;
+      font-size: 24px; text-align: center;
+      letter-spacing: 8px; font-weight: 600; margin-bottom: 20px;
     }
-
-    .code-input:focus {
-      outline: none;
-      border-color: #6366f1;
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-    }
-
+    .code-input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
     .waiting-text {
-      color: #94a3b8;
-      font-size: 13px;
-      margin-top: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      color: #94a3b8; font-size: 13px; margin-top: 12px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
     }
-
     .waiting-spinner {
-      width: 14px;
-      height: 14px;
+      width: 14px; height: 14px;
       border: 2px solid rgba(148, 163, 184, 0.3);
-      border-top-color: #94a3b8;
-      border-radius: 50%;
+      border-top-color: #94a3b8; border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-
     .back-btn {
       background: transparent;
       border: 1px solid rgba(71, 85, 105, 0.5);
-      color: #94a3b8;
-      padding: 12px;
-      border-radius: 12px;
-      cursor: pointer;
-      margin-top: 12px;
-      width: 100%;
-      font-size: 14px;
-      transition: all 0.3s;
+      color: #94a3b8; padding: 12px; border-radius: 12px;
+      cursor: pointer; margin-top: 12px; width: 100%;
+      font-size: 14px; transition: all 0.3s;
     }
-
-    .back-btn:hover {
-      background: rgba(71, 85, 105, 0.2);
-      color: #cbd5e1;
-    }
+    .back-btn:hover { background: rgba(71, 85, 105, 0.2); color: #cbd5e1; }
   </style>
 </head>
 <body>
@@ -288,70 +127,29 @@
         <p id="pageSubtitle">Создайте аккаунт в мессенджере</p>
       </div>
 
-      <div class="error-box" id="errorBox">
-        <p id="errorText"></p>
-      </div>
+      <div class="error-box" id="errorBox"><p id="errorText"></p></div>
+      <div class="success-box" id="successBox"><p id="successText"></p></div>
 
-      <div class="success-box" id="successBox">
-        <p id="successText"></p>
-      </div>
-
-      <!-- ШАГ 1: Форма регистрации -->
       <form id="registerForm">
         <div class="form-group">
-          <label for="username">Имя</label>
-          <input 
-            type="text" 
-            id="username" 
-            name="username" 
-            placeholder="Ваше имя" 
-            required 
-            autocomplete="name"
-          >
-        </div>
-
-        <div class="form-group">
-          <label for="email">Почта</label>
-          <input 
-            type="email" 
-            id="email" 
-            name="email" 
-            placeholder="you@example.com" 
-            required 
-            autocomplete="email"
-          >
+          <label for="username">Ник</label>
+          <input type="text" id="username" name="username" placeholder="Придумай ник" required autocomplete="username" minlength="3">
         </div>
 
         <div class="form-group">
           <label for="password">Пароль</label>
-          <input 
-            type="password" 
-            id="password" 
-            name="password" 
-            placeholder="Минимум 6 символов" 
-            required 
-            minlength="6"
-            autocomplete="new-password"
-          >
+          <input type="password" id="password" name="password" placeholder="Минимум 6 символов" required minlength="6" autocomplete="new-password">
         </div>
 
-        <button type="submit" class="btn" id="submitBtn">
-          Продолжить
-        </button>
+        <button type="submit" class="btn" id="submitBtn">Продолжить</button>
       </form>
 
-      <!-- ШАГ 2: Telegram верификация -->
       <div class="telegram-step" id="telegramStep">
         <div class="telegram-info">
-          <p>
-            📱 Для получения кода подтверждения<br>
-            перейди в наш Telegram-бот
-          </p>
+          <p>📱 Для получения кода подтверждения<br>перейди в наш Telegram-бот</p>
         </div>
 
-        <a href="#" id="telegramLink" target="_blank" class="btn btn-telegram">
-          ✈️ Открыть Telegram
-        </a>
+        <a href="#" id="telegramLink" target="_blank" class="btn btn-telegram">✈️ Открыть Telegram</a>
 
         <div class="waiting-text" id="waitingText">
           <div class="waiting-spinner"></div>
@@ -359,32 +157,14 @@
         </div>
 
         <div style="margin-top: 24px;">
-          <label for="codeInput" style="display: block; color: #cbd5e1; font-size: 14px; margin-bottom: 8px; text-align: left;">
-            Код из Telegram:
-          </label>
-          <input 
-            type="text" 
-            id="codeInput" 
-            class="code-input"
-            placeholder="000000"
-            maxlength="6"
-            pattern="[0-9]{6}"
-            inputmode="numeric"
-          >
-
-          <button type="button" class="btn" id="verifyBtn">
-            Подтвердить код
-          </button>
-
-          <button type="button" class="back-btn" id="backBtn">
-            ← Назад
-          </button>
+          <label for="codeInput" style="display: block; color: #cbd5e1; font-size: 14px; margin-bottom: 8px; text-align: left;">Код из Telegram:</label>
+          <input type="text" id="codeInput" class="code-input" placeholder="000000" maxlength="6" inputmode="numeric">
+          <button type="button" class="btn" id="verifyBtn">Подтвердить код</button>
+          <button type="button" class="back-btn" id="backBtn">← Назад</button>
         </div>
       </div>
 
-      <p class="footer-link" id="footerLink">
-        Уже есть аккаунт? <a href="login.html">Войти</a>
-      </p>
+      <p class="footer-link">Уже есть аккаунт? <a href="login.html">Войти</a></p>
     </div>
   </div>
 
@@ -404,148 +184,98 @@
     const pageTitle = document.getElementById('pageTitle');
     const pageSubtitle = document.getElementById('pageSubtitle');
 
-    let currentEmail = '';
     let currentSessionToken = '';
     let checkInterval = null;
 
-    function showError(message) {
-      errorBox.style.display = 'block';
-      errorText.textContent = message;
-      successBox.style.display = 'none';
+    function showError(msg) { errorBox.style.display='block'; errorText.textContent=msg; successBox.style.display='none'; }
+    function showSuccess(msg) { successBox.style.display='block'; successText.textContent=msg; errorBox.style.display='none'; }
+    function hideMessages() { errorBox.style.display='none'; successBox.style.display='none'; }
+    function setLoading(l) {
+      submitBtn.disabled = l;
+      submitBtn.innerHTML = l ? '<span class="btn-loading"><span class="spinner"></span> Отправка...</span>' : 'Продолжить';
     }
 
-    function showSuccess(message) {
-      successBox.style.display = 'block';
-      successText.textContent = message;
-      errorBox.style.display = 'none';
-    }
-
-    function hideMessages() {
-      errorBox.style.display = 'none';
-      successBox.style.display = 'none';
-    }
-
-    function setLoading(isLoading) {
-      submitBtn.disabled = isLoading;
-      if (isLoading) {
-        submitBtn.innerHTML = '<span class="btn-loading"><span class="spinner"></span> Отправка...</span>';
-      } else {
-        submitBtn.textContent = 'Продолжить';
-      }
-    }
-
-    // ШАГ 1: Отправка формы регистрации
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      
       const username = document.getElementById('username').value.trim();
-      const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value;
-
-      hideMessages();
-      setLoading(true);
+      hideMessages(); setLoading(true);
 
       try {
         const response = await fetch('/register/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, email, password })
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ username, password })
         });
-
         const data = await response.json();
 
         if (data.success) {
-          currentEmail = data.email;
           currentSessionToken = data.sessionToken;
-          
-          // Показываем шаг Telegram
           form.style.display = 'none';
           telegramStep.style.display = 'block';
           pageTitle.textContent = 'Подтверждение';
           pageSubtitle.textContent = 'Получи код через Telegram';
           telegramLink.href = data.telegramLink;
-          
-          // Начинаем проверять пришёл ли код
           startCheckingCode();
         } else {
           showError(data.error || 'Ошибка регистрации');
         }
-      } catch (error) {
+      } catch (err) {
         showError('Ошибка сети. Попробуйте позже.');
-        console.error(error);
       } finally {
         setLoading(false);
       }
     });
 
-    // Проверяем пришёл ли код (опрашиваем сервер раз в секунду)
     function startCheckingCode() {
       if (checkInterval) clearInterval(checkInterval);
-      
       checkInterval = setInterval(async () => {
         try {
-          const response = await fetch('/register/check/' + currentSessionToken);
-          const data = await response.json();
-          
-          if (data.ready) {
+          const r = await fetch('/session/check/' + currentSessionToken);
+          const d = await r.json();
+          if (d.ready) {
             clearInterval(checkInterval);
-            waitingText.innerHTML = '✅ <span style="color: #4ade80;">Код готов! Смотри в Telegram</span>';
+            waitingText.innerHTML = '✅ <span style="color:#4ade80;">Код готов! Смотри в Telegram</span>';
             showSuccess('Код отправлен в Telegram! Введи его ниже.');
             codeInput.focus();
           }
-        } catch (error) {
-          console.error('Ошибка проверки:', error);
-        }
+        } catch(e) {}
       }, 1500);
     }
 
-    // Автоформат кода (только цифры)
     codeInput.addEventListener('input', (e) => {
       e.target.value = e.target.value.replace(/\D/g, '').substring(0, 6);
     });
 
-    // ШАГ 2: Проверка кода
     verifyBtn.addEventListener('click', async () => {
       const code = codeInput.value.trim();
-      
-      if (code.length !== 6) {
-        showError('Код должен состоять из 6 цифр');
-        return;
-      }
-
+      if (code.length !== 6) { showError('Код должен состоять из 6 цифр'); return; }
       hideMessages();
       verifyBtn.disabled = true;
       verifyBtn.innerHTML = '<span class="btn-loading"><span class="spinner"></span> Проверка...</span>';
 
       try {
-        const response = await fetch('/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: currentEmail, code })
+        const r = await fetch('/verify', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ sessionToken: currentSessionToken, code })
         });
+        const d = await r.json();
 
-        const data = await response.json();
-
-        if (data.success) {
+        if (d.success) {
           if (checkInterval) clearInterval(checkInterval);
-          showSuccess('✅ Аккаунт подтверждён! Перенаправление...');
-          localStorage.setItem('pendingEmail', currentEmail);
-          setTimeout(() => {
-            window.location.href = 'login.html';
-          }, 1500);
+          showSuccess('✅ Аккаунт создан! Перенаправление...');
+          setTimeout(() => { window.location.href = 'login.html'; }, 1500);
         } else {
-          showError(data.error || 'Неверный код');
+          showError(d.error || 'Неверный код');
           verifyBtn.disabled = false;
           verifyBtn.textContent = 'Подтвердить код';
         }
-      } catch (error) {
+      } catch (e) {
         showError('Ошибка сети. Попробуйте позже.');
         verifyBtn.disabled = false;
         verifyBtn.textContent = 'Подтвердить код';
       }
     });
 
-    // Кнопка Назад
     backBtn.addEventListener('click', () => {
       if (checkInterval) clearInterval(checkInterval);
       form.style.display = 'block';
@@ -554,7 +284,6 @@
       pageSubtitle.textContent = 'Создайте аккаунт в мессенджере';
       hideMessages();
       codeInput.value = '';
-      currentEmail = '';
       currentSessionToken = '';
     });
   </script>

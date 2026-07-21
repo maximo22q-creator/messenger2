@@ -60,20 +60,24 @@ db.exec(`
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// НАСТРОЙКА ПОЧТЫ (Nodemailer + Gmail через порт 587)
+// НАСТРОЙКА ПОЧТЫ (Nodemailer + Gmail через порт 587, только IPv4)
 // =============================================
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
   secure: false,
   requireTLS: true,
+  family: 4,
   auth: {
     user: 'skambombtg@gmail.com',
     pass: 'udgovsgftmvgevxm'
   },
   tls: {
     rejectUnauthorized: false
-  }
+  },
+  pool: true,
+  maxConnections: 3,
+  maxMessages: 100
 });
 
 transporter.verify((error, success) => {

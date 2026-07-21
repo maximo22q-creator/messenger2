@@ -1,7 +1,7 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
 // Node.js + Express + SQLite
-// Простая регистрация без подтверждений
+// Простая регистрация без подтверждений + поиск
 // =============================================
 
 const express = require('express');
@@ -77,7 +77,6 @@ app.post('/register', (req, res) => {
       return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
     }
 
-    // Проверка на допустимые символы
     if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(trimmedUsername)) {
       return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
     }
@@ -142,7 +141,7 @@ app.post('/login', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ
+// ЭНДПОИНТ: ПОЛУЧИТЬ СПИСОК ЧАТОВ (только те с кем общался)
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
@@ -151,12 +150,18 @@ app.get('/api/users', (req, res) => {
       return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
     }
 
+    // Только пользователи с которыми есть переписка
     const users = db.prepare(`
-      SELECT id, username, created_at 
-      FROM users 
-      WHERE username != ?
-      ORDER BY username ASC
-    `).all(currentUsername);
+      SELECT DISTINCT u.id, u.username, u.created_at
+      FROM users u
+      WHERE u.username != ?
+        AND u.username IN (
+          SELECT sender_username FROM messages WHERE receiver_username = ?
+          UNION
+          SELECT receiver_username FROM messages WHERE sender_username = ?
+        )
+      ORDER BY u.username ASC
+    `).all(currentUsername, currentUsername, currentUsername);
 
     const usersWithUnread = users.map(user => {
       const unreadCount = db.prepare(`
@@ -190,6 +195,36 @@ app.get('/api/users', (req, res) => {
 
     res.json({ success: true, users: usersWithUnread });
   } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ЭНДПОИНТ: ПОИСК ПОЛЬЗОВАТЕЛЕЙ ПО НИКУ
+// =============================================
+app.get('/api/search', (req, res) => {
+  try {
+    const { query, currentUsername } = req.query;
+    if (!currentUsername) {
+      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
+    }
+
+    if (!query || query.trim().length < 1) {
+      return res.json({ success: true, users: [] });
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+    const users = db.prepare(`
+      SELECT id, username FROM users 
+      WHERE username LIKE ? AND username != ?
+      ORDER BY username ASC
+      LIMIT 20
+    `).all(searchTerm, currentUsername);
+
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -284,7 +319,7 @@ app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
-  console.log('  ⚡ Простая авторизация (ник + пароль)');
+  console.log('  🔍 Поиск пользователей: ВКЛЮЧЕН');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

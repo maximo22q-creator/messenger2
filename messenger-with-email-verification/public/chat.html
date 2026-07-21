@@ -27,11 +27,11 @@
       </div>
 
       <div class="search-box">
-        <input type="text" class="search-input" id="searchInput" placeholder="🔍 Поиск пользователей...">
+        <input type="text" class="search-input" id="searchInput" placeholder="🔍 Найти пользователя по нику...">
       </div>
 
       <div class="users-list" id="usersList">
-        <div class="users-title">Пользователи</div>
+        <div class="users-title">Чаты</div>
         <div class="loading">
           <div class="spinner"></div>
         </div>
@@ -42,7 +42,7 @@
       <div class="empty-chat" id="emptyChat">
         <div class="icon">💬</div>
         <h2>Выберите собеседника</h2>
-        <p>Выберите пользователя из списка слева, чтобы начать общение</p>
+        <p>Начните общение — найдите пользователя через поиск</p>
       </div>
 
       <div id="activeChat" style="display: none; flex-direction: column; height: 100%;">
@@ -87,12 +87,15 @@
         id: localStorage.getItem('userId')
       },
       selectedUser: null,
-      users: [],
+      chats: [],           // список чатов (кому писал/от кого получал)
+      searchResults: [],   // результаты поиска
+      isSearching: false,  // режим поиска
       messages: [],
       renderedMessageIds: new Set(),
       lastRenderedDate: '',
       pollInterval: null,
-      usersPollInterval: null
+      usersPollInterval: null,
+      searchTimeout: null
     };
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -106,8 +109,10 @@
       document.getElementById('myAvatar').textContent = getInitials(state.currentUser.username);
       document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
 
-      loadUsers();
-      state.usersPollInterval = setInterval(loadUsers, 5000);
+      loadChats();
+      state.usersPollInterval = setInterval(() => {
+        if (!state.isSearching) loadChats();
+      }, 5000);
 
       const messageInput = document.getElementById('messageInput');
       messageInput.addEventListener('keydown', (e) => {
@@ -122,45 +127,84 @@
         messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
       });
 
-      document.getElementById('searchInput').addEventListener('input', filterUsers);
+      // Поиск с задержкой (debounce)
+      document.getElementById('searchInput').addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        
+        if (state.searchTimeout) clearTimeout(state.searchTimeout);
+        
+        if (query.length === 0) {
+          state.isSearching = false;
+          renderChats(state.chats);
+          return;
+        }
+
+        state.searchTimeout = setTimeout(() => {
+          searchUsers(query);
+        }, 300);
+      });
     });
 
-    async function loadUsers() {
+    // =============================================
+    // ЗАГРУЗКА СПИСКА ЧАТОВ
+    // =============================================
+    async function loadChats() {
       try {
         const response = await fetch(`/api/users?currentUsername=${encodeURIComponent(state.currentUser.username)}`);
         const data = await response.json();
 
         if (data.success) {
-          state.users = data.users;
-          renderUsers(data.users);
+          state.chats = data.users;
+          if (!state.isSearching) {
+            renderChats(data.users);
+          }
         }
       } catch (error) {
-        console.error('Ошибка загрузки пользователей:', error);
+        console.error('Ошибка загрузки чатов:', error);
       }
     }
 
-    function renderUsers(users) {
-      const container = document.getElementById('usersList');
-      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-      
-      const filtered = users.filter(u => 
-        u.username.toLowerCase().includes(searchTerm)
-      );
+    // =============================================
+    // ПОИСК ПОЛЬЗОВАТЕЛЕЙ
+    // =============================================
+    async function searchUsers(query) {
+      state.isSearching = true;
+      try {
+        const response = await fetch(
+          `/api/search?query=${encodeURIComponent(query)}&currentUsername=${encodeURIComponent(state.currentUser.username)}`
+        );
+        const data = await response.json();
 
-      if (filtered.length === 0) {
+        if (data.success) {
+          state.searchResults = data.users;
+          renderSearchResults(data.users, query);
+        }
+      } catch (error) {
+        console.error('Ошибка поиска:', error);
+      }
+    }
+
+    // =============================================
+    // ОТРИСОВКА СПИСКА ЧАТОВ
+    // =============================================
+    function renderChats(chats) {
+      const container = document.getElementById('usersList');
+      
+      if (chats.length === 0) {
         container.innerHTML = `
-          <div class="users-title">Пользователи</div>
+          <div class="users-title">Чаты</div>
           <div class="no-users">
-            <div class="icon">👥</div>
-            <p>${searchTerm ? 'Никого не найдено' : 'Пока нет других пользователей'}</p>
+            <div class="icon">💬</div>
+            <p>У тебя пока нет чатов</p>
+            <p style="margin-top: 8px; font-size: 12px;">Найди пользователя через поиск сверху</p>
           </div>
         `;
         return;
       }
 
       container.innerHTML = `
-        <div class="users-title">Пользователи (${filtered.length})</div>
-        ${filtered.map(user => `
+        <div class="users-title">Чаты (${chats.length})</div>
+        ${chats.map(user => `
           <div class="user-item ${state.selectedUser?.username === user.username ? 'active' : ''}" 
                onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
             <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
@@ -181,10 +225,41 @@
       `;
     }
 
-    function filterUsers() {
-      renderUsers(state.users);
+    // =============================================
+    // ОТРИСОВКА РЕЗУЛЬТАТОВ ПОИСКА
+    // =============================================
+    function renderSearchResults(users, query) {
+      const container = document.getElementById('usersList');
+      
+      if (users.length === 0) {
+        container.innerHTML = `
+          <div class="users-title">Поиск: "${escapeHtml(query)}"</div>
+          <div class="no-users">
+            <div class="icon">🔍</div>
+            <p>Никого не найдено</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="users-title">Найдено: ${users.length}</div>
+        ${users.map(user => `
+          <div class="user-item" 
+               onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
+            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
+            <div class="details">
+              <div class="name">${escapeHtml(user.username)}</div>
+              <div class="last-message">@${escapeHtml(user.username)}</div>
+            </div>
+          </div>
+        `).join('')}
+      `;
     }
 
+    // =============================================
+    // ВЫБОР СОБЕСЕДНИКА
+    // =============================================
     function selectUser(username, id) {
       state.selectedUser = { username, id };
 
@@ -202,7 +277,7 @@
         }
       });
 
-      // Сбрасываем состояние чата
+      // Сброс состояния чата
       state.messages = [];
       state.renderedMessageIds = new Set();
       state.lastRenderedDate = '';
@@ -210,14 +285,12 @@
 
       loadMessages(true);
 
-      if (state.pollInterval) {
-        clearInterval(state.pollInterval);
-      }
+      if (state.pollInterval) clearInterval(state.pollInterval);
       state.pollInterval = setInterval(() => loadMessages(false), 2000);
 
       document.getElementById('messageInput').focus();
 
-      // Мобильный режим - показываем чат
+      // Мобильный режим
       if (window.innerWidth <= 768) {
         document.getElementById('sidebar').classList.add('hidden');
         document.getElementById('chatArea').classList.add('active');
@@ -229,6 +302,9 @@
       document.getElementById('chatArea').classList.remove('active');
     }
 
+    // =============================================
+    // ЗАГРУЗКА СООБЩЕНИЙ
+    // =============================================
     async function loadMessages(isFirstLoad = false) {
       if (!state.selectedUser) return;
 
@@ -250,8 +326,8 @@
             scrollToBottom();
           }
 
-          if (hasNewMessages) {
-            loadUsers();
+          if (hasNewMessages && !state.isSearching) {
+            loadChats();
           }
         }
       } catch (error) {
@@ -311,6 +387,9 @@
       }
     }
 
+    // =============================================
+    // ОТПРАВКА СООБЩЕНИЯ
+    // =============================================
     async function sendMessage() {
       const input = document.getElementById('messageInput');
       const text = input.value.trim();
@@ -341,7 +420,10 @@
           appendNewMessages([data.message]);
           scrollToBottom();
           
-          loadUsers();
+          // Обновляем список чатов (новый чат появится)
+          if (!state.isSearching) {
+            loadChats();
+          }
         } else {
           alert(data.error || 'Ошибка отправки');
         }
@@ -354,6 +436,9 @@
       }
     }
 
+    // =============================================
+    // УТИЛИТЫ
+    // =============================================
     function getInitials(name) {
       if (!name) return '?';
       return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);

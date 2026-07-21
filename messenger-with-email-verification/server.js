@@ -1,20 +1,22 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
-// Node.js + Express + SQLite + Nodemailer
+// Node.js + Express + SQLite + Brevo API
 // =============================================
 
 const express = require('express');
 const cors = require('cors');
 const Database = require('better-sqlite3');
-const nodemailer = require('nodemailer');
 const path = require('path');
-const dns = require('dns');
-
-// Заставляем Node.js использовать IPv4 (для Render)
-dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// =============================================
+// НАСТРОЙКИ BREVO
+// =============================================
+const BREVO_API_KEY = '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';
+const SENDER_EMAIL = 'skambombtg@gmail.com';
+const SENDER_NAME = 'BombAnimation';
 
 // =============================================
 // MIDDLEWARE
@@ -60,48 +62,22 @@ db.exec(`
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// НАСТРОЙКА ПОЧТЫ (Nodemailer + Gmail через порт 587, только IPv4)
-// =============================================
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  family: 4,
-  auth: {
-    user: 'skambombtg@gmail.com',
-    pass: 'udgovsgftmvgevxm'
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  pool: true,
-  maxConnections: 3,
-  maxMessages: 100
-});
-
-transporter.verify((error, success) => {
-  if (error) {
-    console.log('❌ Ошибка подключения к почте:', error.message);
-  } else {
-    console.log('✅ Почтовый сервер готов отправлять письма');
-  }
-});
-
-// =============================================
 // ФУНКЦИИ
 // =============================================
 function generateCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Отправка письма через Brevo API (HTTP запрос, не SMTP)
 async function sendVerificationEmail(email, code) {
-  const mailOptions = {
-    from: '"Messenger App" <skambombtg@gmail.com>',
-    to: email,
+  const emailData = {
+    sender: {
+      name: SENDER_NAME,
+      email: SENDER_EMAIL
+    },
+    to: [{ email: email }],
     subject: `Ваш код подтверждения: ${code}`,
-    text: `Ваш код подтверждения: ${code}`,
-    html: `
+    htmlContent: `
       <div style="font-family: Arial, sans-serif; max-width: 400px; margin: 0 auto; padding: 20px; background: #1e293b; border-radius: 16px;">
         <h2 style="color: #818cf8; text-align: center;">📬 Подтверждение регистрации</h2>
         <p style="color: #94a3b8; text-align: center;">Ваш 6-значный код:</p>
@@ -110,11 +86,28 @@ async function sendVerificationEmail(email, code) {
         </div>
         <p style="color: #64748b; text-align: center; font-size: 12px;">Код действителен 10 минут</p>
       </div>
-    `
+    `,
+    textContent: `Ваш код подтверждения: ${code}`
   };
 
-  await transporter.sendMail(mailOptions);
-  console.log(`📧 Письмо отправлено на ${email} | Код: ${code}`);
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': BREVO_API_KEY,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(emailData)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Brevo API error: ${response.status} - ${errorText}`);
+  }
+
+  const result = await response.json();
+  console.log(`📧 Письмо отправлено на ${email} | Код: ${code} | messageId: ${result.messageId}`);
+  return result;
 }
 
 // =============================================
@@ -401,7 +394,7 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
-  console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
+  console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН (Brevo API)');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

@@ -17,7 +17,7 @@
           <div class="avatar" id="myAvatar">?</div>
           <div class="info">
             <div class="name" id="myName">Загрузка...</div>
-            <div class="email" id="myEmail">...</div>
+            <div class="email" id="myUsername">...</div>
           </div>
           <button class="logout-btn" onclick="logout()" title="Выйти">
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -49,7 +49,7 @@
       </div>
 
       <!-- Активный чат (скрыт по умолчанию) -->
-      <div id="activeChat" style="display: none; flex: 1; display: none; flex-direction: column;">
+      <div id="activeChat" style="display: none; flex-direction: column;">
         <!-- Заголовок чата -->
         <header class="chat-header">
           <div class="avatar" id="partnerAvatar">?</div>
@@ -90,8 +90,7 @@
     // =============================================
     const state = {
       currentUser: {
-        email: localStorage.getItem('userEmail'),
-        name: localStorage.getItem('userName'),
+        username: localStorage.getItem('userName'),
         id: localStorage.getItem('userId')
       },
       selectedUser: null,
@@ -106,15 +105,15 @@
     // =============================================
     document.addEventListener('DOMContentLoaded', () => {
       // Проверяем авторизацию
-      if (!state.currentUser.email) {
+      if (!state.currentUser.username) {
         window.location.href = 'login.html';
         return;
       }
 
       // Отображаем данные текущего пользователя
-      document.getElementById('myName').textContent = state.currentUser.name || 'Пользователь';
-      document.getElementById('myEmail').textContent = state.currentUser.email;
-      document.getElementById('myAvatar').textContent = getInitials(state.currentUser.name);
+      document.getElementById('myName').textContent = state.currentUser.username;
+      document.getElementById('myUsername').textContent = '@' + state.currentUser.username;
+      document.getElementById('myAvatar').textContent = getInitials(state.currentUser.username);
       document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
 
       // Загружаем список пользователей
@@ -147,7 +146,7 @@
     // =============================================
     async function loadUsers() {
       try {
-        const response = await fetch(`/api/users?currentEmail=${encodeURIComponent(state.currentUser.email)}`);
+        const response = await fetch(`/api/users?currentUsername=${encodeURIComponent(state.currentUser.username)}`);
         const data = await response.json();
 
         if (data.success) {
@@ -165,8 +164,7 @@
       
       // Фильтруем по поиску
       const filtered = users.filter(u => 
-        u.username.toLowerCase().includes(searchTerm) || 
-        u.email.toLowerCase().includes(searchTerm)
+        u.username.toLowerCase().includes(searchTerm)
       );
 
       if (filtered.length === 0) {
@@ -183,8 +181,8 @@
       container.innerHTML = `
         <div class="users-title">Пользователи (${filtered.length})</div>
         ${filtered.map(user => `
-          <div class="user-item ${state.selectedUser?.email === user.email ? 'active' : ''}" 
-               onclick="selectUser('${user.email}', '${escapeHtml(user.username)}', ${user.id})">
+          <div class="user-item ${state.selectedUser?.username === user.username ? 'active' : ''}" 
+               onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
             <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
             <div class="details">
               <div class="name">${escapeHtml(user.username)}</div>
@@ -207,21 +205,21 @@
       renderUsers(state.users);
     }
 
-    function selectUser(email, name, id) {
-      state.selectedUser = { email, name, id };
+    function selectUser(username, id) {
+      state.selectedUser = { username, id };
 
       // Обновляем UI
       document.getElementById('emptyChat').style.display = 'none';
       document.getElementById('activeChat').style.display = 'flex';
       
-      document.getElementById('partnerName').textContent = name;
-      document.getElementById('partnerAvatar').textContent = getInitials(name);
+      document.getElementById('partnerName').textContent = username;
+      document.getElementById('partnerAvatar').textContent = getInitials(username);
       document.getElementById('partnerAvatar').className = `avatar ${getAvatarClass(id)}`;
 
       // Обновляем активный элемент в списке
       document.querySelectorAll('.user-item').forEach(el => {
         el.classList.remove('active');
-        if (el.onclick.toString().includes(email)) {
+        if (el.onclick.toString().includes(`'${username}'`)) {
           el.classList.add('active');
         }
       });
@@ -247,7 +245,7 @@
 
       try {
         const response = await fetch(
-          `/api/messages?with=${encodeURIComponent(state.selectedUser.email)}&currentEmail=${encodeURIComponent(state.currentUser.email)}`
+          `/api/messages?with=${encodeURIComponent(state.selectedUser.username)}&currentUsername=${encodeURIComponent(state.currentUser.username)}`
         );
         const data = await response.json();
 
@@ -297,7 +295,8 @@
           lastDate = msgDate;
         }
 
-        const isMine = msg.sender_email === state.currentUser.email;
+        const isMine = msg.sender_username === state.currentUser.username;
+
         html += `
           <div class="message ${isMine ? 'mine' : 'other'}">
             <div class="message-bubble">
@@ -326,8 +325,8 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            senderEmail: state.currentUser.email,
-            receiverEmail: state.selectedUser.email,
+            senderUsername: state.currentUser.username,
+            receiverUsername: state.selectedUser.username,
             messageText: text
           })
         });
@@ -375,6 +374,11 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    function escapeAttr(text) {
+      if (!text) return '';
+      return String(text).replace(/'/g, "\\'").replace(/"/g, '&quot;');
     }
 
     function truncate(text, length) {
@@ -434,9 +438,9 @@
       if (state.usersPollInterval) clearInterval(state.usersPollInterval);
 
       // Очищаем localStorage
-      localStorage.removeItem('userEmail');
       localStorage.removeItem('userName');
       localStorage.removeItem('userId');
+      localStorage.removeItem('userEmail'); // на всякий случай
 
       // Перенаправляем на логин
       window.location.href = 'login.html';

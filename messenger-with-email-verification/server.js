@@ -1,7 +1,7 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
 // Node.js + Express + SQLite
-// Простая регистрация без подтверждений + поиск
+// С системой сохранения сессии (авто-вход)
 // =============================================
 
 const express = require('express');
@@ -45,12 +45,32 @@ db.exec(`
 `);
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
   CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_username);
   CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 `);
 
 console.log('✅ База данных SQLite готова');
+
+// =============================================
+// УТИЛИТЫ
+// =============================================
+function generateToken() {
+  return Math.random().toString(36).substring(2) + 
+         Math.random().toString(36).substring(2) +
+         Date.now().toString(36);
+}
 
 // =============================================
 // ЭНДПОИНТ: РЕГИСТРАЦИЯ
@@ -68,21 +88,17 @@ app.post('/register', (req, res) => {
     if (trimmedUsername.length < 3) {
       return res.status(400).json({ success: false, error: 'Ник должен быть минимум 3 символа' });
     }
-
     if (trimmedUsername.length > 20) {
       return res.status(400).json({ success: false, error: 'Ник не длиннее 20 символов' });
     }
-
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
     }
-
     if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(trimmedUsername)) {
       return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
     }
 
     const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
-    
     if (existingUser) {
       return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
     }
@@ -90,12 +106,17 @@ app.post('/register', (req, res) => {
     const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(trimmedUsername, password);
     const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(result.lastInsertRowid);
     
+    // Создаём токен сессии
+    const token = generateToken();
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
+    
     console.log(`✅ Новый пользователь: ${trimmedUsername}`);
     
     res.json({ 
       success: true, 
       message: 'Аккаунт создан!',
-      user
+      user,
+      token
     });
 
   } catch (error) {
@@ -121,17 +142,21 @@ app.post('/login', (req, res) => {
     if (!user) {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
     }
-
     if (user.password !== password) {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
     }
+
+    // Создаём токен сессии
+    const token = generateToken();
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
 
     console.log(`🔑 Вход: ${trimmedUsername}`);
     
     res.json({ 
       success: true, 
       message: 'Вход выполнен!',
-      user: { id: user.id, username: user.username }
+      user: { id: user.id, username: user.username },
+      token
     });
 
   } catch (error) {
@@ -141,7 +166,52 @@ app.post('/login', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОЛУЧИТЬ СПИСОК ЧАТОВ (только те с кем общался)
+// ЭНДПОИНТ: ПРОВЕРКА ТОКЕНА (авто-вход)
+// =============================================
+app.post('/api/auth/check', (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Токен обязателен' });
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    }
+
+    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+    if (!user) {
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+      return res.status(401).json({ success: false, error: 'Пользователь не найден' });
+    }
+
+    db.prepare('UPDATE sessions SET last_used = CURRENT_TIMESTAMP WHERE token = ?').run(token);
+
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Ошибка проверки токена:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ЭНДПОИНТ: ВЫХОД (удаление токена)
+// =============================================
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const { token } = req.body;
+    if (token) {
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ЭНДПОИНТ: СПИСОК ЧАТОВ
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
@@ -150,7 +220,6 @@ app.get('/api/users', (req, res) => {
       return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
     }
 
-    // Только пользователи с которыми есть переписка
     const users = db.prepare(`
       SELECT DISTINCT u.id, u.username, u.created_at
       FROM users u
@@ -201,7 +270,7 @@ app.get('/api/users', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОИСК ПОЛЬЗОВАТЕЛЕЙ ПО НИКУ
+// ЭНДПОИНТ: ПОИСК ПОЛЬЗОВАТЕЛЕЙ
 // =============================================
 app.get('/api/search', (req, res) => {
   try {
@@ -285,7 +354,7 @@ app.post('/api/messages', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОЛУЧИТЬ ИНФО О ПОЛЬЗОВАТЕЛЕ
+// ЭНДПОИНТ: ИНФО О ПОЛЬЗОВАТЕЛЕ
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
@@ -302,10 +371,10 @@ app.get('/api/user', (req, res) => {
 });
 
 // =============================================
-// СЛУЖЕБНЫЕ ЭНДПОИНТЫ
+// СЛУЖЕБНЫЕ
 // =============================================
 app.get('/', (req, res) => {
-  res.redirect('/register.html');
+  res.redirect('/login.html');
 });
 
 app.get('/api/health', (req, res) => {
@@ -313,13 +382,14 @@ app.get('/api/health', (req, res) => {
 });
 
 // =============================================
-// ЗАПУСК СЕРВЕРА
+// ЗАПУСК
 // =============================================
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
-  console.log('  🔍 Поиск пользователей: ВКЛЮЧЕН');
+  console.log('  🔐 Авто-вход по токену: ВКЛ');
+  console.log('  🔍 Поиск пользователей: ВКЛ');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

@@ -1,536 +1,398 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Чат | Messenger</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <div class="chat-container">
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <h1>💬 Messenger</h1>
-        
-        <div class="current-user">
-          <div class="avatar" id="myAvatar">?</div>
-          <div class="info">
-            <div class="name" id="myName">Загрузка...</div>
-            <div class="email" id="myUsername">...</div>
-          </div>
-          <button class="logout-btn" onclick="logout()" title="Выйти">
-            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-            </svg>
-          </button>
-        </div>
-      </div>
+// =============================================
+// МЕССЕНДЖЕР - БЭКЕНД (server.js)
+// Node.js + Express + SQLite
+// С поддержкой мульти-аккаунтов
+// =============================================
 
-      <div class="search-box">
-        <input type="text" class="search-input" id="searchInput" placeholder="🔍 Найти пользователя по нику...">
-      </div>
+const express = require('express');
+const cors = require('cors');
+const Database = require('better-sqlite3');
+const path = require('path');
 
-      <div class="users-list" id="usersList">
-        <div class="users-title">Чаты</div>
-        <div class="loading">
-          <div class="spinner"></div>
-        </div>
-      </div>
-    </aside>
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-    <main class="chat-area" id="chatArea">
-      <div class="empty-chat" id="emptyChat">
-        <div class="icon">💬</div>
-        <h2>Выберите собеседника</h2>
-        <p>Начните общение — найдите пользователя через поиск</p>
-      </div>
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-      <div id="activeChat" style="display: none; flex-direction: column; height: 100%;">
-        <header class="chat-header">
-          <button class="mobile-back-btn" onclick="closeMobileChat()" title="Назад">
-            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-            </svg>
-          </button>
-          <div class="avatar" id="partnerAvatar">?</div>
-          <div class="info">
-            <div class="name" id="partnerName">Имя</div>
-            <div class="status" id="partnerStatus">онлайн</div>
-          </div>
-        </header>
+const db = new Database('messenger.db');
 
-        <div class="messages-container" id="messagesContainer"></div>
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
-        <div class="message-input-container">
-          <div class="message-input-wrapper">
-            <textarea 
-              class="message-input" 
-              id="messageInput" 
-              placeholder="Введите сообщение..." 
-              rows="1"
-            ></textarea>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </main>
-  </div>
+db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_username TEXT NOT NULL,
+    receiver_username TEXT NOT NULL,
+    message_text TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_read INTEGER DEFAULT 0
+  )
+`);
 
-  <script>
-    const state = {
-      currentUser: {
-        username: localStorage.getItem('userName'),
-        id: localStorage.getItem('userId')
-      },
-      selectedUser: null,
-      chats: [],
-      searchResults: [],
-      isSearching: false,
-      messages: [],
-      renderedMessageIds: new Set(),
-      lastRenderedDate: '',
-      pollInterval: null,
-      usersPollInterval: null,
-      searchTimeout: null
-    };
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
-    document.addEventListener('DOMContentLoaded', async () => {
-      // Проверка авторизации по токену
-      const token = localStorage.getItem('authToken');
-      if (!token) {
-        window.location.href = 'login.html';
-        return;
-      }
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
+  CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_username);
+  CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+`);
 
-      try {
-        const r = await fetch('/api/auth/check', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ token })
-        });
-        const d = await r.json();
-        
-        if (!d.success) {
-          localStorage.clear();
-          window.location.href = 'login.html';
-          return;
-        }
+console.log('✅ База данных SQLite готова');
 
-        state.currentUser.username = d.user.username;
-        state.currentUser.id = d.user.id;
-        localStorage.setItem('userName', d.user.username);
-        localStorage.setItem('userId', d.user.id);
-      } catch (e) {
-        if (!state.currentUser.username) {
-          window.location.href = 'login.html';
-          return;
-        }
-      }
+function generateToken() {
+  return Math.random().toString(36).substring(2) + 
+         Math.random().toString(36).substring(2) +
+         Date.now().toString(36);
+}
 
-      document.getElementById('myName').textContent = state.currentUser.username;
-      document.getElementById('myUsername').textContent = '@' + state.currentUser.username;
-      document.getElementById('myAvatar').textContent = getInitials(state.currentUser.username);
-      document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
+// РЕГИСТРАЦИЯ
+app.post('/register', (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-      loadChats();
-      state.usersPollInterval = setInterval(() => {
-        if (!state.isSearching) loadChats();
-      }, 5000);
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
+    }
 
-      const messageInput = document.getElementById('messageInput');
-      messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
-      });
+    const trimmedUsername = username.trim();
 
-      messageInput.addEventListener('input', () => {
-        messageInput.style.height = 'auto';
-        messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
-      });
+    if (trimmedUsername.length < 3) {
+      return res.status(400).json({ success: false, error: 'Ник должен быть минимум 3 символа' });
+    }
+    if (trimmedUsername.length > 20) {
+      return res.status(400).json({ success: false, error: 'Ник не длиннее 20 символов' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
+    }
+    if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(trimmedUsername)) {
+      return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
+    }
 
-      document.getElementById('searchInput').addEventListener('input', (e) => {
-        const query = e.target.value.trim();
-        if (state.searchTimeout) clearTimeout(state.searchTimeout);
-        if (query.length === 0) {
-          state.isSearching = false;
-          renderChats(state.chats);
-          return;
-        }
-        state.searchTimeout = setTimeout(() => {
-          searchUsers(query);
-        }, 300);
-      });
+    const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
+    if (existingUser) {
+      return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
+    }
+
+    const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(trimmedUsername, password);
+    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(result.lastInsertRowid);
+    
+    const token = generateToken();
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
+    
+    console.log(`✅ Новый пользователь: ${trimmedUsername}`);
+    
+    res.json({ success: true, message: 'Аккаунт создан!', user, token });
+
+  } catch (error) {
+    console.error('Ошибка регистрации:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+  }
+});
+
+// ВХОД
+app.post('/login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
+    }
+
+    const trimmedUsername = username.trim();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
+    }
+    if (user.password !== password) {
+      return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
+    }
+
+    const token = generateToken();
+    db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
+
+    console.log(`🔑 Вход: ${trimmedUsername}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Вход выполнен!',
+      user: { id: user.id, username: user.username },
+      token
     });
 
-    async function loadChats() {
-      try {
-        const response = await fetch(`/api/users?currentUsername=${encodeURIComponent(state.currentUser.username)}`);
-        const data = await response.json();
+  } catch (error) {
+    console.error('Ошибка входа:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
 
-        if (data.success) {
-          state.chats = data.users;
-          if (!state.isSearching) {
-            renderChats(data.users);
-          }
-        }
-      } catch (error) {
-        console.error('Ошибка загрузки чатов:', error);
-      }
+// ПРОВЕРКА ТОКЕНА
+app.post('/api/auth/check', (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Токен обязателен' });
     }
 
-    async function searchUsers(query) {
-      state.isSearching = true;
-      try {
-        const response = await fetch(
-          `/api/search?query=${encodeURIComponent(query)}&currentUsername=${encodeURIComponent(state.currentUser.username)}`
-        );
-        const data = await response.json();
-
-        if (data.success) {
-          state.searchResults = data.users;
-          renderSearchResults(data.users, query);
-        }
-      } catch (error) {
-        console.error('Ошибка поиска:', error);
-      }
+    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Токен недействителен' });
     }
 
-    function renderChats(chats) {
-      const container = document.getElementById('usersList');
-      
-      if (chats.length === 0) {
-        container.innerHTML = `
-          <div class="users-title">Чаты</div>
-          <div class="no-users">
-            <div class="icon">💬</div>
-            <p>У тебя пока нет чатов</p>
-            <p style="margin-top: 8px; font-size: 12px;">Найди пользователя через поиск сверху</p>
-          </div>
-        `;
-        return;
-      }
-
-      container.innerHTML = `
-        <div class="users-title">Чаты (${chats.length})</div>
-        ${chats.map(user => `
-          <div class="user-item ${state.selectedUser?.username === user.username ? 'active' : ''}" 
-               onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
-            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
-            <div class="details">
-              <div class="name">${escapeHtml(user.username)}</div>
-              <div class="last-message">
-                ${user.lastMessage 
-                  ? (user.lastMessageIsMine ? 'Вы: ' : '') + escapeHtml(truncate(user.lastMessage, 30))
-                  : '💬 Начните диалог'}
-              </div>
-            </div>
-            <div class="meta">
-              ${user.lastMessageTime ? `<div class="time">${formatTime(user.lastMessageTime)}</div>` : ''}
-              ${user.unreadCount > 0 ? `<div class="unread-badge">${user.unreadCount}</div>` : ''}
-            </div>
-          </div>
-        `).join('')}
-      `;
+    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+    if (!user) {
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+      return res.status(401).json({ success: false, error: 'Пользователь не найден' });
     }
 
-    function renderSearchResults(users, query) {
-      const container = document.getElementById('usersList');
-      
-      if (users.length === 0) {
-        container.innerHTML = `
-          <div class="users-title">Поиск: "${escapeHtml(query)}"</div>
-          <div class="no-users">
-            <div class="icon">🔍</div>
-            <p>Никого не найдено</p>
-          </div>
-        `;
-        return;
-      }
+    db.prepare('UPDATE sessions SET last_used = CURRENT_TIMESTAMP WHERE token = ?').run(token);
 
-      container.innerHTML = `
-        <div class="users-title">Найдено: ${users.length}</div>
-        ${users.map(user => `
-          <div class="user-item" 
-               onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
-            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
-            <div class="details">
-              <div class="name">${escapeHtml(user.username)}</div>
-              <div class="last-message">@${escapeHtml(user.username)}</div>
-            </div>
-          </div>
-        `).join('')}
-      `;
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Ошибка проверки токена:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// ПРОВЕРКА НЕСКОЛЬКИХ ТОКЕНОВ СРАЗУ
+app.post('/api/auth/check-many', (req, res) => {
+  try {
+    const { tokens } = req.body;
+    if (!Array.isArray(tokens)) {
+      return res.status(400).json({ success: false, error: 'tokens должен быть массивом' });
     }
 
-    function selectUser(username, id) {
-      state.selectedUser = { username, id };
+    const results = tokens.map(token => {
+      const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+      if (!session) return { token, valid: false };
 
-      document.getElementById('emptyChat').style.display = 'none';
-      document.getElementById('activeChat').style.display = 'flex';
-      
-      document.getElementById('partnerName').textContent = username;
-      document.getElementById('partnerAvatar').textContent = getInitials(username);
-      document.getElementById('partnerAvatar').className = `avatar ${getAvatarClass(id)}`;
+      const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+      if (!user) return { token, valid: false };
 
-      document.querySelectorAll('.user-item').forEach(el => {
-        el.classList.remove('active');
-        if (el.onclick.toString().includes(`'${username}'`)) {
-          el.classList.add('active');
-        }
-      });
-
-      state.messages = [];
-      state.renderedMessageIds = new Set();
-      state.lastRenderedDate = '';
-      document.getElementById('messagesContainer').innerHTML = '';
-
-      loadMessages(true);
-
-      if (state.pollInterval) clearInterval(state.pollInterval);
-      state.pollInterval = setInterval(() => loadMessages(false), 2000);
-
-      document.getElementById('messageInput').focus();
-
-      if (window.innerWidth <= 768) {
-        document.getElementById('sidebar').classList.add('hidden');
-        document.getElementById('chatArea').classList.add('active');
-      }
-    }
-
-    function closeMobileChat() {
-      document.getElementById('sidebar').classList.remove('hidden');
-      document.getElementById('chatArea').classList.remove('active');
-    }
-
-    async function loadMessages(isFirstLoad = false) {
-      if (!state.selectedUser) return;
-
-      try {
-        const response = await fetch(
-          `/api/messages?with=${encodeURIComponent(state.selectedUser.username)}&currentUsername=${encodeURIComponent(state.currentUser.username)}`
-        );
-        const data = await response.json();
-
-        if (data.success) {
-          const wasAtBottom = isScrolledToBottom();
-          const oldCount = state.messages.length;
-          state.messages = data.messages;
-          
-          appendNewMessages(data.messages);
-
-          const hasNewMessages = data.messages.length > oldCount;
-          if (isFirstLoad || wasAtBottom || hasNewMessages) {
-            scrollToBottom();
-          }
-
-          if (hasNewMessages && !state.isSearching) {
-            loadChats();
-          }
-        }
-      } catch (error) {
-        console.error('Ошибка загрузки сообщений:', error);
-      }
-    }
-
-    function appendNewMessages(messages) {
-      const container = document.getElementById('messagesContainer');
-      
-      if (messages.length === 0) {
-        if (state.renderedMessageIds.size === 0) {
-          container.innerHTML = `
-            <div class="empty-chat" style="height: 100%;">
-              <div class="icon">👋</div>
-              <h2>Начните общение</h2>
-              <p>Отправьте первое сообщение</p>
-            </div>
-          `;
-        }
-        return;
-      }
-
-      const emptyBlock = container.querySelector('.empty-chat');
-      if (emptyBlock) {
-        container.innerHTML = '';
-        state.lastRenderedDate = '';
-      }
-
-      let html = '';
-      
-      messages.forEach(msg => {
-        if (state.renderedMessageIds.has(msg.id)) return;
-
-        const msgDate = formatDate(msg.timestamp);
-        
-        if (msgDate !== state.lastRenderedDate) {
-          html += `<div class="date-divider"><span>${msgDate}</span></div>`;
-          state.lastRenderedDate = msgDate;
-        }
-
-        const isMine = msg.sender_username === state.currentUser.username;
-        html += `
-          <div class="message ${isMine ? 'mine' : 'other'}">
-            <div class="message-bubble">
-              <div class="message-text">${escapeHtml(msg.message_text)}</div>
-              <div class="message-time">${formatMessageTime(msg.timestamp)}</div>
-            </div>
-          </div>
-        `;
-        
-        state.renderedMessageIds.add(msg.id);
-      });
-
-      if (html) {
-        container.insertAdjacentHTML('beforeend', html);
-      }
-    }
-
-    async function sendMessage() {
-      const input = document.getElementById('messageInput');
-      const text = input.value.trim();
-
-      if (!text || !state.selectedUser) return;
-
-      const btn = document.getElementById('sendBtn');
-      btn.disabled = true;
-
-      try {
-        const response = await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            senderUsername: state.currentUser.username,
-            receiverUsername: state.selectedUser.username,
-            messageText: text
-          })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-          input.value = '';
-          input.style.height = 'auto';
-          
-          state.messages.push(data.message);
-          appendNewMessages([data.message]);
-          scrollToBottom();
-          
-          if (!state.isSearching) {
-            loadChats();
-          }
-        } else {
-          alert(data.error || 'Ошибка отправки');
-        }
-      } catch (error) {
-        console.error('Ошибка отправки:', error);
-        alert('Ошибка сети');
-      } finally {
-        btn.disabled = false;
-        input.focus();
-      }
-    }
-
-    function getInitials(name) {
-      if (!name) return '?';
-      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-    }
-
-    function getAvatarClass(id) {
-      const colors = ['avatar-1', 'avatar-2', 'avatar-3', 'avatar-4', 'avatar-5', 'avatar-6'];
-      return colors[(parseInt(id) || 0) % colors.length];
-    }
-
-    function escapeHtml(text) {
-      if (!text) return '';
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    function escapeAttr(text) {
-      if (!text) return '';
-      return String(text).replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    }
-
-    function truncate(text, length) {
-      if (!text) return '';
-      return text.length > length ? text.substring(0, length) + '...' : text;
-    }
-
-    function formatTime(timestamp) {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-
-      if (diffDays === 0) {
-        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      } else if (diffDays === 1) {
-        return 'Вчера';
-      } else if (diffDays < 7) {
-        return date.toLocaleDateString('ru-RU', { weekday: 'short' });
-      } else {
-        return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-      }
-    }
-
-    function formatDate(timestamp) {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-
-      if (diffDays === 0) {
-        return 'Сегодня';
-      } else if (diffDays === 1) {
-        return 'Вчера';
-      } else {
-        return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-      }
-    }
-
-    function formatMessageTime(timestamp) {
-      return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    }
-
-    function isScrolledToBottom() {
-      const container = document.getElementById('messagesContainer');
-      return container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
-    }
-
-    function scrollToBottom() {
-      const container = document.getElementById('messagesContainer');
-      setTimeout(() => {
-        container.scrollTop = container.scrollHeight;
-      }, 50);
-    }
-
-    async function logout() {
-      if (state.pollInterval) clearInterval(state.pollInterval);
-      if (state.usersPollInterval) clearInterval(state.usersPollInterval);
-
-      const token = localStorage.getItem('authToken');
-      if (token) {
-        try {
-          await fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ token })
-          });
-        } catch(e) {}
-      }
-
-      localStorage.clear();
-      window.location.href = 'login.html';
-    }
-
-    window.addEventListener('beforeunload', () => {
-      if (state.pollInterval) clearInterval(state.pollInterval);
-      if (state.usersPollInterval) clearInterval(state.usersPollInterval);
+      return { token, valid: true, user };
     });
-  </script>
-</body>
-</html>
+
+    res.json({ success: true, results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// ВЫХОД
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const { token } = req.body;
+    if (token) {
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// СПИСОК ЧАТОВ
+app.get('/api/users', (req, res) => {
+  try {
+    const currentUsername = req.query.currentUsername;
+    if (!currentUsername) {
+      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
+    }
+
+    const users = db.prepare(`
+      SELECT DISTINCT u.id, u.username, u.created_at
+      FROM users u
+      WHERE u.username != ?
+        AND u.username IN (
+          SELECT sender_username FROM messages WHERE receiver_username = ?
+          UNION
+          SELECT receiver_username FROM messages WHERE sender_username = ?
+        )
+      ORDER BY u.username ASC
+    `).all(currentUsername, currentUsername, currentUsername);
+
+    const usersWithUnread = users.map(user => {
+      const unreadCount = db.prepare(`
+        SELECT COUNT(*) as count FROM messages 
+        WHERE sender_username = ? AND receiver_username = ? AND is_read = 0
+      `).get(user.username, currentUsername);
+
+      const lastMessage = db.prepare(`
+        SELECT message_text, timestamp, sender_username FROM messages 
+        WHERE (sender_username = ? AND receiver_username = ?) OR (sender_username = ? AND receiver_username = ?)
+        ORDER BY timestamp DESC LIMIT 1
+      `).get(user.username, currentUsername, currentUsername, user.username);
+
+      return {
+        ...user,
+        unreadCount: unreadCount?.count || 0,
+        lastMessage: lastMessage?.message_text || null,
+        lastMessageTime: lastMessage?.timestamp || null,
+        lastMessageIsMine: lastMessage?.sender_username === currentUsername
+      };
+    });
+
+    usersWithUnread.sort((a, b) => {
+      if (a.lastMessageTime && b.lastMessageTime) {
+        return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
+      }
+      if (a.lastMessageTime) return -1;
+      if (b.lastMessageTime) return 1;
+      return 0;
+    });
+
+    res.json({ success: true, users: usersWithUnread });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// ПОДСЧЁТ НЕПРОЧИТАННЫХ (для бейджа на аватаре)
+app.get('/api/unread-count', (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
+
+    const result = db.prepare(`
+      SELECT COUNT(*) as count FROM messages 
+      WHERE receiver_username = ? AND is_read = 0
+    `).get(username);
+
+    res.json({ success: true, count: result?.count || 0 });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// ПОИСК
+app.get('/api/search', (req, res) => {
+  try {
+    const { query, currentUsername } = req.query;
+    if (!currentUsername) {
+      return res.status(400).json({ success: false, error: 'currentUsername обязателен' });
+    }
+
+    if (!query || query.trim().length < 1) {
+      return res.json({ success: true, users: [] });
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+    const users = db.prepare(`
+      SELECT id, username FROM users 
+      WHERE username LIKE ? AND username != ?
+      ORDER BY username ASC
+      LIMIT 20
+    `).all(searchTerm, currentUsername);
+
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// СООБЩЕНИЯ
+app.get('/api/messages', (req, res) => {
+  try {
+    const { with: partnerUsername, currentUsername } = req.query;
+    if (!partnerUsername || !currentUsername) {
+      return res.status(400).json({ success: false, error: 'with и currentUsername обязательны' });
+    }
+
+    const messages = db.prepare(`
+      SELECT id, sender_username, receiver_username, message_text, timestamp FROM messages 
+      WHERE (sender_username = ? AND receiver_username = ?) OR (sender_username = ? AND receiver_username = ?)
+      ORDER BY timestamp ASC
+    `).all(currentUsername, partnerUsername, partnerUsername, currentUsername);
+
+    db.prepare(`
+      UPDATE messages SET is_read = 1 
+      WHERE sender_username = ? AND receiver_username = ? AND is_read = 0
+    `).run(partnerUsername, currentUsername);
+
+    res.json({ success: true, messages });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// ОТПРАВКА СООБЩЕНИЯ
+app.post('/api/messages', (req, res) => {
+  try {
+    const { senderUsername, receiverUsername, messageText } = req.body;
+    if (!senderUsername || !receiverUsername || !messageText || !messageText.trim()) {
+      return res.status(400).json({ success: false, error: 'Все поля обязательны' });
+    }
+
+    const receiver = db.prepare('SELECT * FROM users WHERE username = ?').get(receiverUsername);
+    if (!receiver) {
+      return res.status(404).json({ success: false, error: 'Получатель не найден' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO messages (sender_username, receiver_username, message_text) VALUES (?, ?, ?)
+    `).run(senderUsername, receiverUsername, messageText.trim());
+
+    const newMessage = db.prepare('SELECT * FROM messages WHERE id = ?').get(result.lastInsertRowid);
+    console.log(`💬 ${senderUsername} → ${receiverUsername}: ${messageText.substring(0, 50)}`);
+
+    res.json({ success: true, message: newMessage });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.get('/api/user', (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
+
+    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username);
+    if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+app.get('/', (req, res) => {
+  res.redirect('/login.html');
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+app.listen(PORT, () => {
+  console.log('');
+  console.log('═══════════════════════════════════════════════');
+  console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
+  console.log('  👥 Мульти-аккаунты: ВКЛ');
+  console.log('  🔐 Авто-вход по токену: ВКЛ');
+  console.log('  🔍 Поиск пользователей: ВКЛ');
+  console.log('═══════════════════════════════════════════════');
+  console.log(`  📍 Порт: ${PORT}`);
+  console.log('═══════════════════════════════════════════════');
+  console.log('');
+});

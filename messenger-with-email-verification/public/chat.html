@@ -6,24 +6,28 @@
   <title>Чат | Messenger</title>
   <link rel="stylesheet" href="style.css">
   <style>
+    /* Аватар с картинкой */
+    .avatar { overflow: hidden; position: relative; }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+
     /* Меню переключения аккаунтов */
     .accounts-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: rgba(30, 41, 59, 0.98);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(71, 85, 105, 0.5);
-  border-radius: 12px;
-  padding: 8px;
-  margin-top: 8px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-  display: none;
-  max-height: 400px;
-  overflow-y: auto;
-  z-index: 100;
-}
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: rgba(30, 41, 59, 0.98);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 12px;
+      padding: 8px;
+      margin-top: 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      display: none;
+      max-height: 400px;
+      overflow-y: auto;
+      z-index: 100;
+    }
     .accounts-menu.open { display: block; }
     .account-item {
       display: flex;
@@ -75,35 +79,112 @@
     }
     .account-action:hover { background: rgba(99, 102, 241, 0.1); color: #a5b4fc; }
     .account-action.danger:hover { background: rgba(239, 68, 68, 0.1); color: #f87171; }
-    .current-user {
-      position: relative;
+    .current-user { position: relative; cursor: pointer; }
+
+    /* Иконка настроек */
+    .settings-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
       cursor: pointer;
-    }
-    .unread-dot {
-      position: absolute;
-      top: -2px; right: -2px;
-      min-width: 16px; height: 16px;
-      background: #ef4444;
+      padding: 8px;
       border-radius: 8px;
-      color: white;
-      font-size: 10px;
-      font-weight: 700;
-      display: flex; align-items: center; justify-content: center;
-      padding: 0 4px;
-      border: 2px solid #1e293b;
+      transition: all 0.2s;
+      margin-right: 4px;
     }
+    .settings-btn:hover {
+      background: rgba(99, 102, 241, 0.1);
+      color: #a5b4fc;
+    }
+
+    /* Модальное окно профиля пользователя */
+    .profile-modal-bg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    .profile-modal-bg.open { display: flex; }
+    .profile-modal {
+      background: rgba(30, 41, 59, 0.98);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 20px;
+      padding: 32px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+      position: relative;
+    }
+    .profile-modal .close-btn {
+      position: absolute; top: 12px; right: 12px;
+      background: transparent; border: none;
+      color: #94a3b8; cursor: pointer;
+      font-size: 24px; padding: 4px 8px;
+    }
+    .profile-modal .close-btn:hover { color: #f87171; }
+    .profile-modal .big-avatar {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 42px; color: white;
+      margin: 0 auto 16px;
+      overflow: hidden;
+    }
+    .profile-modal .big-avatar img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .profile-modal .profile-name {
+      font-size: 22px; font-weight: 700; color: #f8fafc;
+      margin-bottom: 4px;
+    }
+    .profile-modal .profile-username {
+      font-size: 14px; color: #94a3b8; margin-bottom: 16px;
+    }
+    .profile-modal .profile-bio {
+      font-size: 14px; color: #cbd5e1;
+      background: rgba(15, 23, 42, 0.5);
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .profile-modal .profile-bio.empty { color: #64748b; font-style: italic; }
+    .profile-modal .action-btn {
+      width: 100%; padding: 12px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border: none; border-radius: 12px;
+      color: white; font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .profile-modal .action-btn:hover { transform: translateY(-1px); }
+
+    /* Кликабельный заголовок чата */
+    .chat-header .info { cursor: pointer; }
+    .chat-header .avatar { cursor: pointer; }
   </style>
 </head>
 <body>
   <div class="chat-container">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <h1>💬 Messenger</h1>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <h1>💬 Messenger</h1>
+          <button class="settings-btn" onclick="openSettings()" title="Настройки">
+            <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+        </div>
         
         <div class="current-user" onclick="toggleAccountsMenu(event)">
-          <div style="position: relative;">
-            <div class="avatar" id="myAvatar">?</div>
-          </div>
+          <div class="avatar" id="myAvatar">?</div>
           <div class="info">
             <div class="name" id="myName">Загрузка...</div>
             <div class="email" id="myUsername">...</div>
@@ -112,10 +193,13 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/>
           </svg>
 
-          <!-- Меню аккаунтов -->
           <div class="accounts-menu" id="accountsMenu">
             <div id="accountsList"></div>
             <div class="account-menu-divider"></div>
+            <div class="account-action" onclick="openSettingsFromMenu(event)">
+              <span style="font-size: 18px;">⚙️</span>
+              <span>Настройки профиля</span>
+            </div>
             <div class="account-action" onclick="addAccount(event)">
               <span style="font-size: 18px;">➕</span>
               <span>Добавить аккаунт</span>
@@ -154,8 +238,8 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
             </svg>
           </button>
-          <div class="avatar" id="partnerAvatar">?</div>
-          <div class="info">
+          <div class="avatar" id="partnerAvatar" onclick="showPartnerProfile()">?</div>
+          <div class="info" onclick="showPartnerProfile()">
             <div class="name" id="partnerName">Имя</div>
             <div class="status" id="partnerStatus">онлайн</div>
           </div>
@@ -182,9 +266,21 @@
     </main>
   </div>
 
+  <!-- Модальное окно профиля -->
+  <div class="profile-modal-bg" id="profileModalBg" onclick="closeProfileModal(event)">
+    <div class="profile-modal" onclick="event.stopPropagation()">
+      <button class="close-btn" onclick="closeProfileModal()">×</button>
+      <div class="big-avatar" id="modalAvatar">?</div>
+      <div class="profile-name" id="modalName">Имя</div>
+      <div class="profile-username" id="modalUsername">@username</div>
+      <div class="profile-bio" id="modalBio">Нет описания</div>
+      <button class="action-btn" onclick="closeProfileModal()">Закрыть</button>
+    </div>
+  </div>
+
   <script>
     const state = {
-      currentUser: { username: null, id: null },
+      currentUser: { username: null, id: null, avatar: '', display_name: '', bio: '' },
       selectedUser: null,
       chats: [],
       searchResults: [],
@@ -198,15 +294,6 @@
       searchTimeout: null
     };
 
-    // Получить текущий токен активного аккаунта
-    function getCurrentToken() {
-      const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
-      const activeUsername = localStorage.getItem('activeUsername');
-      const account = accounts.find(a => a.username === activeUsername);
-      return account?.token || null;
-    }
-
-    // Получить активный аккаунт
     function getActiveAccount() {
       const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
       const activeUsername = localStorage.getItem('activeUsername');
@@ -242,8 +329,24 @@
           return;
         }
 
-        state.currentUser.username = d.user.username;
-        state.currentUser.id = d.user.id;
+        state.currentUser = {
+          username: d.user.username,
+          id: d.user.id,
+          avatar: d.user.avatar || '',
+          display_name: d.user.display_name || '',
+          bio: d.user.bio || ''
+        };
+
+        // Обновляем ник в localStorage если он изменился
+        if (d.user.username !== activeAccount.username) {
+          const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
+          const idx = accounts.findIndex(a => a.username === activeAccount.username);
+          if (idx !== -1) {
+            accounts[idx].username = d.user.username;
+            localStorage.setItem('accounts', JSON.stringify(accounts));
+            localStorage.setItem('activeUsername', d.user.username);
+          }
+        }
       } catch (e) {
         state.currentUser.username = activeAccount.username;
         state.currentUser.id = activeAccount.userId;
@@ -285,7 +388,6 @@
         }, 300);
       });
 
-      // Закрытие меню аккаунтов при клике вне
       document.addEventListener('click', (e) => {
         const menu = document.getElementById('accountsMenu');
         const currentUser = document.querySelector('.current-user');
@@ -296,10 +398,87 @@
     });
 
     function updateCurrentUserUI() {
-      document.getElementById('myName').textContent = state.currentUser.username;
+      const displayName = state.currentUser.display_name || state.currentUser.username;
+      document.getElementById('myName').textContent = displayName;
       document.getElementById('myUsername').textContent = '@' + state.currentUser.username;
-      document.getElementById('myAvatar').textContent = getInitials(state.currentUser.username);
-      document.getElementById('myAvatar').className = `avatar ${getAvatarClass(state.currentUser.id)}`;
+      renderAvatarElement('myAvatar', state.currentUser.avatar, displayName, state.currentUser.id);
+    }
+
+    // Универсальная отрисовка аватара
+    function renderAvatarElement(elementId, avatar, name, id) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      
+      if (avatar) {
+        el.className = 'avatar';
+        el.innerHTML = `<img src="${avatar}" alt="">`;
+      } else {
+        el.className = `avatar ${getAvatarClass(id)}`;
+        el.textContent = getInitials(name);
+      }
+    }
+
+    // Универсальный HTML аватара
+    function getAvatarHTML(avatar, name, id) {
+      if (avatar) {
+        return `<div class="avatar"><img src="${avatar}" alt=""></div>`;
+      }
+      return `<div class="avatar ${getAvatarClass(id)}">${getInitials(name)}</div>`;
+    }
+
+    // =============================================
+    // НАСТРОЙКИ
+    // =============================================
+    function openSettings() {
+      window.location.href = 'settings.html';
+    }
+
+    function openSettingsFromMenu(e) {
+      e.stopPropagation();
+      openSettings();
+    }
+
+    // =============================================
+    // ПРОФИЛЬ СОБЕСЕДНИКА
+    // =============================================
+    async function showPartnerProfile() {
+      if (!state.selectedUser) return;
+      
+      try {
+        const r = await fetch(`/api/user?username=${encodeURIComponent(state.selectedUser.username)}`);
+        const d = await r.json();
+        if (!d.success) return;
+
+        const user = d.user;
+        const displayName = user.display_name || user.username;
+        
+        const modalAvatar = document.getElementById('modalAvatar');
+        if (user.avatar) {
+          modalAvatar.innerHTML = `<img src="${user.avatar}" alt="">`;
+        } else {
+          modalAvatar.innerHTML = getInitials(displayName);
+        }
+        modalAvatar.className = 'big-avatar' + (user.avatar ? '' : ' ' + getAvatarClass(user.id));
+
+        document.getElementById('modalName').textContent = displayName;
+        document.getElementById('modalUsername').textContent = '@' + user.username;
+        
+        const bioEl = document.getElementById('modalBio');
+        if (user.bio) {
+          bioEl.textContent = user.bio;
+          bioEl.classList.remove('empty');
+        } else {
+          bioEl.textContent = 'Пользователь не добавил описание';
+          bioEl.classList.add('empty');
+        }
+
+        document.getElementById('profileModalBg').classList.add('open');
+      } catch(e) {}
+    }
+
+    function closeProfileModal(e) {
+      if (e && e.target !== e.currentTarget) return;
+      document.getElementById('profileModalBg').classList.remove('open');
     }
 
     // =============================================
@@ -334,7 +513,6 @@
       
       localStorage.setItem('accounts', JSON.stringify(accounts));
       
-      // Обновляем UI если меню открыто
       const menu = document.getElementById('accountsMenu');
       if (menu.classList.contains('open')) {
         renderAccountsMenu();
@@ -384,7 +562,6 @@
       const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
       const account = accounts.find(a => a.username === username);
       
-      // Отзываем токен на сервере
       if (account) {
         fetch('/api/auth/logout', {
           method: 'POST',
@@ -472,12 +649,14 @@
 
       container.innerHTML = `
         <div class="users-title">Чаты (${chats.length})</div>
-        ${chats.map(user => `
+        ${chats.map(user => {
+          const displayName = user.display_name || user.username;
+          return `
           <div class="user-item ${state.selectedUser?.username === user.username ? 'active' : ''}" 
                onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
-            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
+            ${getAvatarHTML(user.avatar, displayName, user.id)}
             <div class="details">
-              <div class="name">${escapeHtml(user.username)}</div>
+              <div class="name">${escapeHtml(displayName)}</div>
               <div class="last-message">
                 ${user.lastMessage 
                   ? (user.lastMessageIsMine ? 'Вы: ' : '') + escapeHtml(truncate(user.lastMessage, 30))
@@ -489,7 +668,7 @@
               ${user.unreadCount > 0 ? `<div class="unread-badge">${user.unreadCount}</div>` : ''}
             </div>
           </div>
-        `).join('')}
+        `;}).join('')}
       `;
     }
 
@@ -509,28 +688,38 @@
 
       container.innerHTML = `
         <div class="users-title">Найдено: ${users.length}</div>
-        ${users.map(user => `
+        ${users.map(user => {
+          const displayName = user.display_name || user.username;
+          return `
           <div class="user-item" 
                onclick="selectUser('${escapeAttr(user.username)}', ${user.id})">
-            <div class="avatar ${getAvatarClass(user.id)}">${getInitials(user.username)}</div>
+            ${getAvatarHTML(user.avatar, displayName, user.id)}
             <div class="details">
-              <div class="name">${escapeHtml(user.username)}</div>
+              <div class="name">${escapeHtml(displayName)}</div>
               <div class="last-message">@${escapeHtml(user.username)}</div>
             </div>
           </div>
-        `).join('')}
+        `;}).join('')}
       `;
     }
 
-    function selectUser(username, id) {
-      state.selectedUser = { username, id };
+    async function selectUser(username, id) {
+      // Загружаем полные данные о пользователе
+      let userData = { username, id, display_name: '', avatar: '' };
+      try {
+        const r = await fetch(`/api/user?username=${encodeURIComponent(username)}`);
+        const d = await r.json();
+        if (d.success) userData = d.user;
+      } catch(e) {}
+
+      state.selectedUser = userData;
 
       document.getElementById('emptyChat').style.display = 'none';
       document.getElementById('activeChat').style.display = 'flex';
       
-      document.getElementById('partnerName').textContent = username;
-      document.getElementById('partnerAvatar').textContent = getInitials(username);
-      document.getElementById('partnerAvatar').className = `avatar ${getAvatarClass(id)}`;
+      const displayName = userData.display_name || userData.username;
+      document.getElementById('partnerName').textContent = displayName;
+      renderAvatarElement('partnerAvatar', userData.avatar, displayName, userData.id);
 
       document.querySelectorAll('.user-item').forEach(el => {
         el.classList.remove('active');

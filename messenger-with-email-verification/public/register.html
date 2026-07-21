@@ -112,6 +112,24 @@
   </div>
 
   <script>
+    // Автопроверка токена — если уже вошёл, сразу в чат
+    (async () => {
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        try {
+          const r = await fetch('/api/auth/check', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ token })
+          });
+          const d = await r.json();
+          if (d.success) {
+            window.location.href = 'chat.html';
+          }
+        } catch(e) {}
+      }
+    })();
+
     const form = document.getElementById('registerForm');
     const submitBtn = document.getElementById('submitBtn');
     const errorBox = document.getElementById('errorBox');
@@ -145,6 +163,7 @@
           showSuccess('✅ Аккаунт создан! Вход...');
           localStorage.setItem('userName', data.user.username);
           localStorage.setItem('userId', data.user.id);
+          localStorage.setItem('authToken', data.token);
           setTimeout(() => { window.location.href = 'chat.html'; }, 1000);
         } else {
           showError(data.error || 'Ошибка регистрации');

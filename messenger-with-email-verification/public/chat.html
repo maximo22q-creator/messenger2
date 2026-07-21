@@ -45,8 +45,13 @@
         <p>Выберите пользователя из списка слева, чтобы начать общение</p>
       </div>
 
-      <div id="activeChat" style="display: none; flex-direction: column;">
+      <div id="activeChat" style="display: none; flex-direction: column; height: 100%;">
         <header class="chat-header">
+          <button class="mobile-back-btn" onclick="closeMobileChat()" title="Назад">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
           <div class="avatar" id="partnerAvatar">?</div>
           <div class="info">
             <div class="name" id="partnerName">Имя</div>
@@ -84,8 +89,8 @@
       selectedUser: null,
       users: [],
       messages: [],
-      renderedMessageIds: new Set(), // ← отслеживаем уже отрисованные сообщения
-      lastRenderedDate: '',           // ← последняя отрисованная дата
+      renderedMessageIds: new Set(),
+      lastRenderedDate: '',
       pollInterval: null,
       usersPollInterval: null
     };
@@ -197,13 +202,13 @@
         }
       });
 
-      // Сбрасываем состояние чата при выборе нового собеседника
+      // Сбрасываем состояние чата
       state.messages = [];
       state.renderedMessageIds = new Set();
       state.lastRenderedDate = '';
       document.getElementById('messagesContainer').innerHTML = '';
 
-      loadMessages(true); // первая загрузка - полная
+      loadMessages(true);
 
       if (state.pollInterval) {
         clearInterval(state.pollInterval);
@@ -211,6 +216,17 @@
       state.pollInterval = setInterval(() => loadMessages(false), 2000);
 
       document.getElementById('messageInput').focus();
+
+      // Мобильный режим - показываем чат
+      if (window.innerWidth <= 768) {
+        document.getElementById('sidebar').classList.add('hidden');
+        document.getElementById('chatArea').classList.add('active');
+      }
+    }
+
+    function closeMobileChat() {
+      document.getElementById('sidebar').classList.remove('hidden');
+      document.getElementById('chatArea').classList.remove('active');
     }
 
     async function loadMessages(isFirstLoad = false) {
@@ -227,16 +243,13 @@
           const oldCount = state.messages.length;
           state.messages = data.messages;
           
-          // Добавляем только НОВЫЕ сообщения
           appendNewMessages(data.messages);
 
-          // Скроллим вниз, если пользователь был внизу или это новые сообщения
           const hasNewMessages = data.messages.length > oldCount;
           if (isFirstLoad || wasAtBottom || hasNewMessages) {
             scrollToBottom();
           }
 
-          // Обновляем список пользователей (для непрочитанных)
           if (hasNewMessages) {
             loadUsers();
           }
@@ -262,7 +275,6 @@
         return;
       }
 
-      // Убираем "начните общение" если оно там висит
       const emptyBlock = container.querySelector('.empty-chat');
       if (emptyBlock) {
         container.innerHTML = '';
@@ -272,12 +284,10 @@
       let html = '';
       
       messages.forEach(msg => {
-        // Пропускаем уже отрисованные сообщения
         if (state.renderedMessageIds.has(msg.id)) return;
 
         const msgDate = formatDate(msg.timestamp);
         
-        // Добавляем разделитель дат если дата поменялась
         if (msgDate !== state.lastRenderedDate) {
           html += `<div class="date-divider"><span>${msgDate}</span></div>`;
           state.lastRenderedDate = msgDate;
@@ -327,7 +337,6 @@
           input.value = '';
           input.style.height = 'auto';
           
-          // Добавляем сообщение локально сразу
           state.messages.push(data.message);
           appendNewMessages([data.message]);
           scrollToBottom();

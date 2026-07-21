@@ -1,6 +1,7 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
-// Node.js + Express + SQLite + Telegram Bot 2FA
+// Node.js + Express + SQLite
+// Простая регистрация без подтверждений
 // =============================================
 
 const express = require('express');
@@ -10,12 +11,6 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// =============================================
-// НАСТРОЙКИ TELEGRAM БОТА
-// =============================================
-const TELEGRAM_BOT_TOKEN = '8507416374:AAEVgD03o56_2L_4HvKDsJp8E_rCR4EP82Y';
-const TELEGRAM_BOT_USERNAME = 'RegisterBotCamca_bot';
 
 // =============================================
 // MIDDLEWARE
@@ -34,8 +29,6 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    is_verified INTEGER DEFAULT 0,
-    telegram_chat_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
@@ -51,21 +44,6 @@ db.exec(`
   )
 `);
 
-// Сессии Telegram (для регистрации и входа)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS telegram_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_token TEXT UNIQUE NOT NULL,
-    session_type TEXT NOT NULL,
-    username TEXT NOT NULL,
-    telegram_chat_id TEXT,
-    telegram_username TEXT,
-    code TEXT,
-    is_used INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_username);
   CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_username);
@@ -75,109 +53,9 @@ db.exec(`
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// TELEGRAM BOT
+// ЭНДПОИНТ: РЕГИСТРАЦИЯ
 // =============================================
-let lastUpdateId = 0;
-
-async function sendTelegramMessage(chatId, text) {
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'HTML'
-      })
-    });
-    return await response.json();
-  } catch (error) {
-    console.error('Ошибка отправки Telegram:', error.message);
-  }
-}
-
-function generateCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-function generateSessionToken() {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-}
-
-// Слушаем сообщения от бота
-async function pollTelegramUpdates() {
-  try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`
-    );
-    const data = await response.json();
-
-    if (data.ok && data.result.length > 0) {
-      for (const update of data.result) {
-        lastUpdateId = update.update_id;
-        
-        if (update.message) {
-          const chatId = update.message.chat.id.toString();
-          const text = update.message.text || '';
-          const tgUsername = update.message.from.username || update.message.from.first_name || 'User';
-
-          console.log(`📨 Telegram от ${tgUsername} (${chatId}): ${text}`);
-
-          if (text.startsWith('/start')) {
-            const parts = text.split(' ');
-            const sessionToken = parts[1];
-
-            if (sessionToken) {
-              const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
-              
-              if (session && !session.is_used) {
-                const code = generateCode();
-                db.prepare('UPDATE telegram_sessions SET telegram_chat_id = ?, telegram_username = ?, code = ? WHERE session_token = ?')
-                  .run(chatId, tgUsername, code, sessionToken);
-
-                const actionText = session.session_type === 'register' 
-                  ? 'регистрации нового аккаунта' 
-                  : 'входа в аккаунт';
-
-                await sendTelegramMessage(chatId, 
-                  `👋 Привет, <b>${tgUsername}</b>!\n\n` +
-                  `Ты запросил код для <b>${actionText}</b>\n` +
-                  `Логин: <code>${session.username}</code>\n\n` +
-                  `Твой код:\n\n` +
-                  `<code>${code}</code>\n\n` +
-                  `⚠️ Никому не сообщай этот код!`
-                );
-              } else {
-                await sendTelegramMessage(chatId, 
-                  `⚠️ Ссылка недействительна или уже использована.\n\n` +
-                  `Вернись на сайт и начни заново.`
-                );
-              }
-            } else {
-              await sendTelegramMessage(chatId, 
-                `👋 Привет!\n\n` +
-                `Я бот для регистрации и входа в мессенджер.\n\n` +
-                `Чтобы получить код — начни регистрацию или вход на сайте и перейди по ссылке.`
-              );
-            }
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Ошибка polling Telegram:', error.message);
-  }
-  
-  setTimeout(pollTelegramUpdates, 1000);
-}
-
-pollTelegramUpdates();
-console.log('🤖 Telegram бот запущен: @' + TELEGRAM_BOT_USERNAME);
-
-// =============================================
-// ЭНДПОИНТ: НАЧАТЬ РЕГИСТРАЦИЮ
-// =============================================
-app.post('/register/start', (req, res) => {
+app.post('/register', (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -185,43 +63,40 @@ app.post('/register/start', (req, res) => {
       return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
     }
 
-    if (username.length < 3) {
+    const trimmedUsername = username.trim();
+
+    if (trimmedUsername.length < 3) {
       return res.status(400).json({ success: false, error: 'Ник должен быть минимум 3 символа' });
+    }
+
+    if (trimmedUsername.length > 20) {
+      return res.status(400).json({ success: false, error: 'Ник не длиннее 20 символов' });
     }
 
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
     }
 
-    // Проверка на допустимые символы в нике
-    if (!/^[a-zA-Z0-9_а-яА-Я]+$/.test(username)) {
+    // Проверка на допустимые символы
+    if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(trimmedUsername)) {
       return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
     }
 
-    const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
     
-    if (existingUser && existingUser.is_verified) {
+    if (existingUser) {
       return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
     }
 
-    const sessionToken = generateSessionToken();
-    db.prepare('INSERT INTO telegram_sessions (session_token, session_type, username) VALUES (?, ?, ?)')
-      .run(sessionToken, 'register', username);
-
-    if (existingUser && !existingUser.is_verified) {
-      db.prepare('UPDATE users SET password = ? WHERE username = ?').run(password, username);
-    } else {
-      db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, password);
-    }
-
-    const telegramLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${sessionToken}`;
+    const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(trimmedUsername, password);
+    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(result.lastInsertRowid);
+    
+    console.log(`✅ Новый пользователь: ${trimmedUsername}`);
     
     res.json({ 
       success: true, 
-      telegramLink,
-      sessionToken,
-      username,
-      message: 'Перейди в Telegram, чтобы получить код'
+      message: 'Аккаунт создан!',
+      user
     });
 
   } catch (error) {
@@ -231,9 +106,9 @@ app.post('/register/start', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: НАЧАТЬ ВХОД
+// ЭНДПОИНТ: ВХОД
 // =============================================
-app.post('/login/start', (req, res) => {
+app.post('/login', (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -241,7 +116,8 @@ app.post('/login/start', (req, res) => {
       return res.status(400).json({ success: false, error: 'Ник и пароль обязательны' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const trimmedUsername = username.trim();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
 
     if (!user) {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
@@ -251,141 +127,16 @@ app.post('/login/start', (req, res) => {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
     }
 
-    if (!user.is_verified) {
-      return res.status(403).json({ success: false, error: 'Аккаунт не подтверждён. Сначала завершите регистрацию.' });
-    }
-
-    // Создаём сессию для входа
-    const sessionToken = generateSessionToken();
-    db.prepare('INSERT INTO telegram_sessions (session_token, session_type, username) VALUES (?, ?, ?)')
-      .run(sessionToken, 'login', username);
-
-    // Если у пользователя уже привязан Telegram — сразу отправляем код
-    if (user.telegram_chat_id) {
-      const code = generateCode();
-      db.prepare('UPDATE telegram_sessions SET telegram_chat_id = ?, code = ? WHERE session_token = ?')
-        .run(user.telegram_chat_id, code, sessionToken);
-
-      sendTelegramMessage(user.telegram_chat_id, 
-        `🔐 <b>Вход в аккаунт</b>\n\n` +
-        `Логин: <code>${username}</code>\n\n` +
-        `Код для входа:\n\n` +
-        `<code>${code}</code>\n\n` +
-        `⚠️ Если это не ты — смени пароль!`
-      ).catch(() => {});
-
-      res.json({ 
-        success: true, 
-        sessionToken,
-        username,
-        alreadyLinked: true,
-        message: 'Код отправлен в Telegram'
-      });
-    } else {
-      // Если Telegram не привязан — даём ссылку
-      const telegramLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${sessionToken}`;
-      res.json({ 
-        success: true, 
-        telegramLink,
-        sessionToken,
-        username,
-        alreadyLinked: false,
-        message: 'Перейди в Telegram, чтобы получить код'
-      });
-    }
+    console.log(`🔑 Вход: ${trimmedUsername}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Вход выполнен!',
+      user: { id: user.id, username: user.username }
+    });
 
   } catch (error) {
     console.error('Ошибка входа:', error);
-    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
-  }
-});
-
-// =============================================
-// ЭНДПОИНТ: ПРОВЕРИТЬ ПРИШЁЛ ЛИ КОД
-// =============================================
-app.get('/session/check/:sessionToken', (req, res) => {
-  try {
-    const { sessionToken } = req.params;
-    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
-    
-    if (!session) {
-      return res.status(404).json({ success: false, error: 'Сессия не найдена' });
-    }
-
-    if (session.code) {
-      res.json({ 
-        success: true, 
-        ready: true,
-        telegramUsername: session.telegram_username
-      });
-    } else {
-      res.json({ success: true, ready: false });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Ошибка сервера' });
-  }
-});
-
-// =============================================
-// ЭНДПОИНТ: ПОДТВЕРДИТЬ КОД (регистрация или вход)
-// =============================================
-app.post('/verify', (req, res) => {
-  try {
-    const { sessionToken, code } = req.body;
-
-    if (!sessionToken || !code) {
-      return res.status(400).json({ success: false, error: 'Сессия и код обязательны' });
-    }
-
-    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
-
-    if (!session) {
-      return res.status(404).json({ success: false, error: 'Сессия не найдена' });
-    }
-
-    if (session.is_used) {
-      return res.status(400).json({ success: false, error: 'Сессия уже использована' });
-    }
-
-    if (!session.code) {
-      return res.status(400).json({ success: false, error: 'Сначала получи код в Telegram' });
-    }
-
-    if (session.code !== code) {
-      return res.status(400).json({ success: false, error: 'Неверный код' });
-    }
-
-    // Помечаем сессию как использованную
-    db.prepare('UPDATE telegram_sessions SET is_used = 1 WHERE session_token = ?').run(sessionToken);
-
-    if (session.session_type === 'register') {
-      // Регистрация: активируем аккаунт и привязываем Telegram
-      db.prepare('UPDATE users SET is_verified = 1, telegram_chat_id = ? WHERE username = ?')
-        .run(session.telegram_chat_id, session.username);
-      
-      console.log(`✅ Аккаунт ${session.username} зарегистрирован через Telegram`);
-      
-      const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
-      res.json({ 
-        success: true, 
-        type: 'register',
-        message: 'Аккаунт создан!',
-        user
-      });
-    } else {
-      // Вход
-      const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
-      console.log(`🔑 Пользователь ${session.username} вошёл через Telegram`);
-      res.json({ 
-        success: true, 
-        type: 'login',
-        message: 'Вход выполнен!',
-        user
-      });
-    }
-
-  } catch (error) {
-    console.error('Ошибка верификации:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -403,7 +154,7 @@ app.get('/api/users', (req, res) => {
     const users = db.prepare(`
       SELECT id, username, created_at 
       FROM users 
-      WHERE is_verified = 1 AND username != ?
+      WHERE username != ?
       ORDER BY username ASC
     `).all(currentUsername);
 
@@ -480,7 +231,7 @@ app.post('/api/messages', (req, res) => {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
 
-    const receiver = db.prepare('SELECT * FROM users WHERE username = ? AND is_verified = 1').get(receiverUsername);
+    const receiver = db.prepare('SELECT * FROM users WHERE username = ?').get(receiverUsername);
     if (!receiver) {
       return res.status(404).json({ success: false, error: 'Получатель не найден' });
     }
@@ -491,13 +242,6 @@ app.post('/api/messages', (req, res) => {
 
     const newMessage = db.prepare('SELECT * FROM messages WHERE id = ?').get(result.lastInsertRowid);
     console.log(`💬 ${senderUsername} → ${receiverUsername}: ${messageText.substring(0, 50)}`);
-    
-    // Уведомление в Telegram получателю
-    if (receiver.telegram_chat_id) {
-      sendTelegramMessage(receiver.telegram_chat_id, 
-        `💬 <b>Новое сообщение</b> от <b>${senderUsername}</b>:\n\n${messageText.trim()}`
-      ).catch(() => {});
-    }
 
     res.json({ success: true, message: newMessage });
   } catch (error) {
@@ -513,7 +257,7 @@ app.get('/api/user', (req, res) => {
     const { username } = req.query;
     if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
 
-    const user = db.prepare('SELECT id, username FROM users WHERE username = ? AND is_verified = 1').get(username);
+    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username);
     if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
 
     res.json({ success: true, user });
@@ -540,8 +284,7 @@ app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
-  console.log('  🤖 Telegram Bot: @' + TELEGRAM_BOT_USERNAME);
-  console.log('  🔐 Авторизация: 2FA через Telegram');
+  console.log('  ⚡ Простая авторизация (ник + пароль)');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

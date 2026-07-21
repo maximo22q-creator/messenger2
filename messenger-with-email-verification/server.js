@@ -1,7 +1,7 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
 // Node.js + Express + SQLite
-// С системой сохранения сессии (авто-вход)
+// С мульти-аккаунтами и профилями
 // =============================================
 
 const express = require('express');
@@ -12,16 +12,10 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// =============================================
-// MIDDLEWARE
-// =============================================
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' })); // для аватарок
 app.use(express.static(path.join(__dirname, 'public')));
 
-// =============================================
-// БАЗА ДАННЫХ (SQLite)
-// =============================================
 const db = new Database('messenger.db');
 
 db.exec(`
@@ -29,9 +23,17 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    display_name TEXT DEFAULT '',
+    bio TEXT DEFAULT '',
+    avatar TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+// Добавляем колонки если их нет (для существующих БД)
+try { db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''`); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -63,17 +65,21 @@ db.exec(`
 
 console.log('✅ База данных SQLite готова');
 
-// =============================================
-// УТИЛИТЫ
-// =============================================
 function generateToken() {
   return Math.random().toString(36).substring(2) + 
          Math.random().toString(36).substring(2) +
          Date.now().toString(36);
 }
 
+function validateUsername(username) {
+  if (!username || username.length < 3) return 'Ник должен быть минимум 3 символа';
+  if (username.length > 20) return 'Ник не длиннее 20 символов';
+  if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(username)) return 'Ник может содержать только буквы, цифры и _';
+  return null;
+}
+
 // =============================================
-// ЭНДПОИНТ: РЕГИСТРАЦИЯ
+// РЕГИСТРАЦИЯ
 // =============================================
 app.post('/register', (req, res) => {
   try {
@@ -84,18 +90,12 @@ app.post('/register', (req, res) => {
     }
 
     const trimmedUsername = username.trim();
-
-    if (trimmedUsername.length < 3) {
-      return res.status(400).json({ success: false, error: 'Ник должен быть минимум 3 символа' });
-    }
-    if (trimmedUsername.length > 20) {
-      return res.status(400).json({ success: false, error: 'Ник не длиннее 20 символов' });
+    const validationError = validateUsername(trimmedUsername);
+    if (validationError) {
+      return res.status(400).json({ success: false, error: validationError });
     }
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Пароль должен быть минимум 6 символов' });
-    }
-    if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]+$/.test(trimmedUsername)) {
-      return res.status(400).json({ success: false, error: 'Ник может содержать только буквы, цифры и _' });
     }
 
     const existingUser = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
@@ -103,21 +103,17 @@ app.post('/register', (req, res) => {
       return res.status(409).json({ success: false, error: 'Пользователь с таким ником уже существует' });
     }
 
-    const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(trimmedUsername, password);
-    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(result.lastInsertRowid);
+    const result = db.prepare('INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)')
+      .run(trimmedUsername, password, trimmedUsername);
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE id = ?')
+      .get(result.lastInsertRowid);
     
-    // Создаём токен сессии
     const token = generateToken();
     db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
     
     console.log(`✅ Новый пользователь: ${trimmedUsername}`);
     
-    res.json({ 
-      success: true, 
-      message: 'Аккаунт создан!',
-      user,
-      token
-    });
+    res.json({ success: true, user, token });
 
   } catch (error) {
     console.error('Ошибка регистрации:', error);
@@ -126,7 +122,7 @@ app.post('/register', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ВХОД
+// ВХОД
 // =============================================
 app.post('/login', (req, res) => {
   try {
@@ -139,23 +135,24 @@ app.post('/login', (req, res) => {
     const trimmedUsername = username.trim();
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedUsername);
 
-    if (!user) {
-      return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
-    }
-    if (user.password !== password) {
+    if (!user || user.password !== password) {
       return res.status(401).json({ success: false, error: 'Неверный ник или пароль' });
     }
 
-    // Создаём токен сессии
     const token = generateToken();
     db.prepare('INSERT INTO sessions (token, username) VALUES (?, ?)').run(token, trimmedUsername);
 
     console.log(`🔑 Вход: ${trimmedUsername}`);
     
     res.json({ 
-      success: true, 
-      message: 'Вход выполнен!',
-      user: { id: user.id, username: user.username },
+      success: true,
+      user: { 
+        id: user.id, 
+        username: user.username,
+        display_name: user.display_name,
+        bio: user.bio,
+        avatar: user.avatar
+      },
       token
     });
 
@@ -166,7 +163,7 @@ app.post('/login', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПРОВЕРКА ТОКЕНА (авто-вход)
+// ПРОВЕРКА ТОКЕНА
 // =============================================
 app.post('/api/auth/check', (req, res) => {
   try {
@@ -180,7 +177,8 @@ app.post('/api/auth/check', (req, res) => {
       return res.status(401).json({ success: false, error: 'Токен недействителен' });
     }
 
-    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(session.username);
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
+      .get(session.username);
     if (!user) {
       db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
       return res.status(401).json({ success: false, error: 'Пользователь не найден' });
@@ -196,7 +194,7 @@ app.post('/api/auth/check', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ВЫХОД (удаление токена)
+// ВЫХОД
 // =============================================
 app.post('/api/auth/logout', (req, res) => {
   try {
@@ -211,7 +209,131 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: СПИСОК ЧАТОВ
+// ОБНОВЛЕНИЕ ПРОФИЛЯ
+// =============================================
+app.post('/api/profile/update', (req, res) => {
+  try {
+    const { token, display_name, bio, username: newUsername } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Токен обязателен' });
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    }
+
+    // Проверки
+    const trimmedDisplayName = (display_name || '').trim().substring(0, 50);
+    const trimmedBio = (bio || '').trim().substring(0, 200);
+    
+    // Изменение юзернейма
+    if (newUsername && newUsername.trim() !== session.username) {
+      const trimmedNew = newUsername.trim();
+      const validationError = validateUsername(trimmedNew);
+      if (validationError) {
+        return res.status(400).json({ success: false, error: validationError });
+      }
+
+      const exists = db.prepare('SELECT * FROM users WHERE username = ?').get(trimmedNew);
+      if (exists) {
+        return res.status(409).json({ success: false, error: 'Такой ник уже занят' });
+      }
+
+      // Обновляем везде
+      db.prepare('UPDATE users SET username = ?, display_name = ?, bio = ? WHERE username = ?')
+        .run(trimmedNew, trimmedDisplayName, trimmedBio, session.username);
+      db.prepare('UPDATE sessions SET username = ? WHERE username = ?').run(trimmedNew, session.username);
+      db.prepare('UPDATE messages SET sender_username = ? WHERE sender_username = ?').run(trimmedNew, session.username);
+      db.prepare('UPDATE messages SET receiver_username = ? WHERE receiver_username = ?').run(trimmedNew, session.username);
+    } else {
+      db.prepare('UPDATE users SET display_name = ?, bio = ? WHERE username = ?')
+        .run(trimmedDisplayName, trimmedBio, session.username);
+    }
+
+    const finalUsername = newUsername?.trim() || session.username;
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
+      .get(finalUsername);
+
+    console.log(`✏️ Профиль обновлён: ${finalUsername}`);
+    res.json({ success: true, user });
+
+  } catch (error) {
+    console.error('Ошибка обновления профиля:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера: ' + error.message });
+  }
+});
+
+// =============================================
+// ОБНОВЛЕНИЕ АВАТАРА
+// =============================================
+app.post('/api/profile/avatar', (req, res) => {
+  try {
+    const { token, avatar } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Токен обязателен' });
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    }
+
+    // Проверка размера (base64 может быть до ~700 КБ для 500 КБ файла)
+    if (avatar && avatar.length > 800000) {
+      return res.status(400).json({ success: false, error: 'Аватар слишком большой (макс 500 КБ)' });
+    }
+
+    db.prepare('UPDATE users SET avatar = ? WHERE username = ?').run(avatar || '', session.username);
+
+    console.log(`🖼️ Аватар обновлён: ${session.username}`);
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Ошибка обновления аватара:', error);
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// СМЕНА ПАРОЛЯ
+// =============================================
+app.post('/api/profile/password', (req, res) => {
+  try {
+    const { token, oldPassword, newPassword } = req.body;
+    
+    if (!token || !oldPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Все поля обязательны' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Новый пароль минимум 6 символов' });
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Токен недействителен' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(session.username);
+    if (user.password !== oldPassword) {
+      return res.status(401).json({ success: false, error: 'Неверный текущий пароль' });
+    }
+
+    db.prepare('UPDATE users SET password = ? WHERE username = ?').run(newPassword, session.username);
+
+    console.log(`🔒 Пароль изменён: ${session.username}`);
+    res.json({ success: true });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// СПИСОК ЧАТОВ
 // =============================================
 app.get('/api/users', (req, res) => {
   try {
@@ -221,7 +343,7 @@ app.get('/api/users', (req, res) => {
     }
 
     const users = db.prepare(`
-      SELECT DISTINCT u.id, u.username, u.created_at
+      SELECT DISTINCT u.id, u.username, u.display_name, u.avatar, u.bio, u.created_at
       FROM users u
       WHERE u.username != ?
         AND u.username IN (
@@ -270,7 +392,26 @@ app.get('/api/users', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОИСК ПОЛЬЗОВАТЕЛЕЙ
+// НЕПРОЧИТАННЫЕ
+// =============================================
+app.get('/api/unread-count', (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
+
+    const result = db.prepare(`
+      SELECT COUNT(*) as count FROM messages 
+      WHERE receiver_username = ? AND is_read = 0
+    `).get(username);
+
+    res.json({ success: true, count: result?.count || 0 });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ПОИСК
 // =============================================
 app.get('/api/search', (req, res) => {
   try {
@@ -285,11 +426,11 @@ app.get('/api/search', (req, res) => {
 
     const searchTerm = `%${query.trim()}%`;
     const users = db.prepare(`
-      SELECT id, username FROM users 
-      WHERE username LIKE ? AND username != ?
+      SELECT id, username, display_name, avatar, bio FROM users 
+      WHERE (username LIKE ? OR display_name LIKE ?) AND username != ?
       ORDER BY username ASC
       LIMIT 20
-    `).all(searchTerm, currentUsername);
+    `).all(searchTerm, searchTerm, currentUsername);
 
     res.json({ success: true, users });
   } catch (error) {
@@ -299,7 +440,7 @@ app.get('/api/search', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОЛУЧИТЬ СООБЩЕНИЯ
+// СООБЩЕНИЯ
 // =============================================
 app.get('/api/messages', (req, res) => {
   try {
@@ -325,9 +466,6 @@ app.get('/api/messages', (req, res) => {
   }
 });
 
-// =============================================
-// ЭНДПОИНТ: ОТПРАВИТЬ СООБЩЕНИЕ
-// =============================================
 app.post('/api/messages', (req, res) => {
   try {
     const { senderUsername, receiverUsername, messageText } = req.body;
@@ -354,14 +492,15 @@ app.post('/api/messages', (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ИНФО О ПОЛЬЗОВАТЕЛЕ
+// ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
     const { username } = req.query;
     if (!username) return res.status(400).json({ success: false, error: 'username обязателен' });
 
-    const user = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username);
+    const user = db.prepare('SELECT id, username, display_name, bio, avatar FROM users WHERE username = ?')
+      .get(username);
     if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
 
     res.json({ success: true, user });
@@ -370,9 +509,6 @@ app.get('/api/user', (req, res) => {
   }
 });
 
-// =============================================
-// СЛУЖЕБНЫЕ
-// =============================================
 app.get('/', (req, res) => {
   res.redirect('/login.html');
 });
@@ -381,15 +517,13 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// =============================================
-// ЗАПУСК
-// =============================================
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
   console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
-  console.log('  🔐 Авто-вход по токену: ВКЛ');
-  console.log('  🔍 Поиск пользователей: ВКЛ');
+  console.log('  👤 Профили: ВКЛ');
+  console.log('  🖼️  Аватарки: ВКЛ');
+  console.log('  👥 Мульти-аккаунты: ВКЛ');
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');

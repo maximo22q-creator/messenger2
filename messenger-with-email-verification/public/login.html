@@ -20,7 +20,7 @@
       border-radius: 24px; padding: 40px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     }
-    .logo { text-align: center; margin-bottom: 32px; }
+    .logo { text-align: center; margin-bottom: 24px; }
     .logo-icon {
       width: 72px; height: 72px;
       background: linear-gradient(135deg, #6366f1, #a855f7);
@@ -30,6 +30,12 @@
     }
     .logo h1 { color: #fff; font-size: 28px; font-weight: 700; }
     .logo p { color: #94a3b8; margin-top: 8px; font-size: 14px; }
+    .add-account-notice {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 12px; padding: 12px 16px; margin-bottom: 20px;
+      text-align: center; color: #a5b4fc; font-size: 14px; display: none;
+    }
     .error-box {
       background: rgba(239, 68, 68, 0.1);
       border: 1px solid rgba(239, 68, 68, 0.3);
@@ -77,7 +83,7 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .footer-link { text-align: center; margin-top: 24px; color: #94a3b8; font-size: 14px; }
-    .footer-link a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.3s; }
+    .footer-link a { color: #818cf8; text-decoration: none; font-weight: 500; }
     .footer-link a:hover { color: #a5b4fc; }
   </style>
 </head>
@@ -88,6 +94,10 @@
         <div class="logo-icon">🔑</div>
         <h1>Вход</h1>
         <p>Войдите в свой аккаунт</p>
+      </div>
+
+      <div class="add-account-notice" id="addAccountNotice">
+        ➕ Добавление ещё одного аккаунта
       </div>
 
       <div class="error-box" id="errorBox"><p id="errorText"></p></div>
@@ -107,11 +117,40 @@
         <button type="submit" class="btn" id="submitBtn">Войти</button>
       </form>
 
-      <p class="footer-link">Нет аккаунта? <a href="register.html">Зарегистрироваться</a></p>
+      <p class="footer-link">Нет аккаунта? <a href="register.html" id="regLink">Зарегистрироваться</a></p>
     </div>
   </div>
 
   <script>
+    const isAddingAccount = new URLSearchParams(window.location.search).get('addAccount') === 'true';
+
+    if (isAddingAccount) {
+      document.getElementById('addAccountNotice').style.display = 'block';
+      document.getElementById('regLink').href = 'register.html?addAccount=true';
+    }
+
+    if (!isAddingAccount) {
+      (async () => {
+        const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
+        const activeUsername = localStorage.getItem('activeUsername');
+        const activeAccount = accounts.find(a => a.username === activeUsername);
+        
+        if (activeAccount) {
+          try {
+            const r = await fetch('/api/auth/check', {
+              method: 'POST',
+              headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({ token: activeAccount.token })
+            });
+            const d = await r.json();
+            if (d.success) {
+              window.location.href = 'chat.html';
+            }
+          } catch(e) {}
+        }
+      })();
+    }
+
     const form = document.getElementById('loginForm');
     const submitBtn = document.getElementById('submitBtn');
     const errorBox = document.getElementById('errorBox');
@@ -143,8 +182,27 @@
 
         if (data.success) {
           showSuccess('✅ Вход выполнен!');
-          localStorage.setItem('userName', data.user.username);
-          localStorage.setItem('userId', data.user.id);
+          
+          const accounts = JSON.parse(localStorage.getItem('accounts') || '[]');
+          
+          const existingIndex = accounts.findIndex(a => a.username === data.user.username);
+          if (existingIndex !== -1) {
+            accounts.splice(existingIndex, 1);
+          }
+          
+          if (accounts.length >= 10) {
+            accounts.shift();
+          }
+          
+          accounts.push({
+            username: data.user.username,
+            userId: data.user.id,
+            token: data.token
+          });
+          
+          localStorage.setItem('accounts', JSON.stringify(accounts));
+          localStorage.setItem('activeUsername', data.user.username);
+          
           setTimeout(() => { window.location.href = 'chat.html'; }, 800);
         } else {
           showError(data.error || 'Ошибка входа');

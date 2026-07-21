@@ -1,6 +1,6 @@
 // =============================================
 // МЕССЕНДЖЕР - БЭКЕНД (server.js)
-// Node.js + Express + SQLite + Brevo API
+// Node.js + Express + SQLite + Telegram Bot
 // =============================================
 
 const express = require('express');
@@ -12,11 +12,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // =============================================
-// НАСТРОЙКИ BREVO
+// НАСТРОЙКИ TELEGRAM БОТА
 // =============================================
-const BREVO_API_KEY = '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';
-const SENDER_EMAIL = 'skambombtg@gmail.com';
-const SENDER_NAME = 'BombAnimation';
+const TELEGRAM_BOT_TOKEN = '8507416374:AAEVgD03o56_2L_4HvKDsJp8E_rCR4EP82Y';
+const TELEGRAM_BOT_USERNAME = 'RegisterBotCamca_bot';
 
 // =============================================
 // MIDDLEWARE
@@ -38,6 +37,7 @@ db.exec(`
     password TEXT NOT NULL,
     is_verified INTEGER DEFAULT 0,
     verification_code TEXT,
+    telegram_chat_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
@@ -53,6 +53,19 @@ db.exec(`
   )
 `);
 
+// Таблица для связи Telegram → регистрация
+db.exec(`
+  CREATE TABLE IF NOT EXISTS telegram_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_token TEXT UNIQUE NOT NULL,
+    telegram_chat_id TEXT,
+    telegram_username TEXT,
+    code TEXT,
+    is_used INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_email);
   CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_email);
@@ -62,58 +75,108 @@ db.exec(`
 console.log('✅ База данных SQLite готова');
 
 // =============================================
-// ФУНКЦИИ
+// TELEGRAM BOT (Long Polling)
 // =============================================
+let lastUpdateId = 0;
+
+async function sendTelegramMessage(chatId, text) {
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'HTML'
+      })
+    });
+    return await response.json();
+  } catch (error) {
+    console.error('Ошибка отправки Telegram:', error.message);
+  }
+}
+
 function generateCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Отправка письма через Brevo API (HTTP запрос, не SMTP)
-async function sendVerificationEmail(email, code) {
-  const emailData = {
-    sender: {
-      name: SENDER_NAME,
-      email: SENDER_EMAIL
-    },
-    to: [{ email: email }],
-    subject: `Ваш код подтверждения: ${code}`,
-    htmlContent: `
-      <div style="font-family: Arial, sans-serif; max-width: 400px; margin: 0 auto; padding: 20px; background: #1e293b; border-radius: 16px;">
-        <h2 style="color: #818cf8; text-align: center;">📬 Подтверждение регистрации</h2>
-        <p style="color: #94a3b8; text-align: center;">Ваш 6-значный код:</p>
-        <div style="background: #334155; border-radius: 12px; padding: 20px; text-align: center; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #fff; margin: 20px 0;">
-          ${code}
-        </div>
-        <p style="color: #64748b; text-align: center; font-size: 12px;">Код действителен 10 минут</p>
-      </div>
-    `,
-    textContent: `Ваш код подтверждения: ${code}`
-  };
-
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'accept': 'application/json',
-      'api-key': BREVO_API_KEY,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify(emailData)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Brevo API error: ${response.status} - ${errorText}`);
-  }
-
-  const result = await response.json();
-  console.log(`📧 Письмо отправлено на ${email} | Код: ${code} | messageId: ${result.messageId}`);
-  return result;
+function generateSessionToken() {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
+// Слушаем сообщения от бота
+async function pollTelegramUpdates() {
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`
+    );
+    const data = await response.json();
+
+    if (data.ok && data.result.length > 0) {
+      for (const update of data.result) {
+        lastUpdateId = update.update_id;
+        
+        if (update.message) {
+          const chatId = update.message.chat.id.toString();
+          const text = update.message.text || '';
+          const username = update.message.from.username || update.message.from.first_name || 'User';
+
+          console.log(`📨 Telegram от ${username} (${chatId}): ${text}`);
+
+          // Обработка /start с параметром (токен сессии)
+          if (text.startsWith('/start')) {
+            const parts = text.split(' ');
+            const sessionToken = parts[1];
+
+            if (sessionToken) {
+              // Проверяем есть ли такая сессия
+              const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
+              
+              if (session && !session.is_used) {
+                // Генерируем код и сохраняем в сессию
+                const code = generateCode();
+                db.prepare('UPDATE telegram_sessions SET telegram_chat_id = ?, telegram_username = ?, code = ? WHERE session_token = ?')
+                  .run(chatId, username, code, sessionToken);
+
+                await sendTelegramMessage(chatId, 
+                  `👋 Привет, <b>${username}</b>!\n\n` +
+                  `Твой код для подтверждения регистрации:\n\n` +
+                  `<code>${code}</code>\n\n` +
+                  `Введи этот код на сайте, чтобы завершить регистрацию.`
+                );
+              } else {
+                await sendTelegramMessage(chatId, 
+                  `⚠️ Ссылка недействительна или уже использована.\n\n` +
+                  `Вернись на сайт и начни регистрацию заново.`
+                );
+              }
+            } else {
+              await sendTelegramMessage(chatId, 
+                `👋 Привет!\n\n` +
+                `Я бот для регистрации в мессенджере.\n\n` +
+                `Чтобы получить код подтверждения, начни регистрацию на сайте и перейди по ссылке которая появится.`
+              );
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Ошибка polling Telegram:', error.message);
+  }
+  
+  // Повторяем через 1 секунду
+  setTimeout(pollTelegramUpdates, 1000);
+}
+
+// Запускаем polling
+pollTelegramUpdates();
+console.log('🤖 Telegram бот запущен');
+
 // =============================================
-// ЭНДПОИНТ: РЕГИСТРАЦИЯ
+// ЭНДПОИНТ: НАЧАТЬ РЕГИСТРАЦИЮ (создать сессию)
 // =============================================
-app.post('/register', async (req, res) => {
+app.post('/register/start', (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -131,18 +194,29 @@ app.post('/register', async (req, res) => {
       return res.status(409).json({ success: false, error: 'Пользователь с таким email уже существует' });
     }
 
-    const code = generateCode();
+    // Создаём сессию Telegram
+    const sessionToken = generateSessionToken();
+    db.prepare('INSERT INTO telegram_sessions (session_token) VALUES (?)').run(sessionToken);
 
+    // Сохраняем/обновляем пользователя (пока без подтверждения)
     if (existingUser && !existingUser.is_verified) {
       db.prepare('UPDATE users SET username = ?, password = ?, verification_code = ? WHERE email = ?')
-        .run(username, password, code, email);
+        .run(username, password, sessionToken, email);
     } else {
       db.prepare('INSERT INTO users (username, email, password, verification_code) VALUES (?, ?, ?, ?)')
-        .run(username, email, password, code);
+        .run(username, email, password, sessionToken);
     }
 
-    await sendVerificationEmail(email, code);
-    res.json({ success: true, message: 'Код отправлен на вашу почту', email });
+    // Возвращаем ссылку на Telegram
+    const telegramLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${sessionToken}`;
+    
+    res.json({ 
+      success: true, 
+      telegramLink,
+      sessionToken,
+      email,
+      message: 'Перейди в Telegram, чтобы получить код'
+    });
 
   } catch (error) {
     console.error('Ошибка регистрации:', error);
@@ -151,7 +225,34 @@ app.post('/register', async (req, res) => {
 });
 
 // =============================================
-// ЭНДПОИНТ: ВЕРИФИКАЦИЯ
+// ЭНДПОИНТ: ПРОВЕРИТЬ, ПРИШЁЛ ЛИ КОД
+// (фронтенд опрашивает раз в секунду)
+// =============================================
+app.get('/register/check/:sessionToken', (req, res) => {
+  try {
+    const { sessionToken } = req.params;
+    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(sessionToken);
+    
+    if (!session) {
+      return res.status(404).json({ success: false, error: 'Сессия не найдена' });
+    }
+
+    if (session.code) {
+      res.json({ 
+        success: true, 
+        ready: true,
+        telegramUsername: session.telegram_username
+      });
+    } else {
+      res.json({ success: true, ready: false });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Ошибка сервера' });
+  }
+});
+
+// =============================================
+// ЭНДПОИНТ: ВЕРИФИКАЦИЯ КОДА
 // =============================================
 app.post('/verify', (req, res) => {
   try {
@@ -171,12 +272,23 @@ app.post('/verify', (req, res) => {
       return res.status(400).json({ success: false, error: 'Аккаунт уже подтверждён' });
     }
 
-    if (user.verification_code !== code) {
-      return res.status(400).json({ success: false, error: 'Неверный код подтверждения' });
+    // Ищем сессию по session_token (сохранён в verification_code)
+    const session = db.prepare('SELECT * FROM telegram_sessions WHERE session_token = ?').get(user.verification_code);
+
+    if (!session || !session.code) {
+      return res.status(400).json({ success: false, error: 'Сначала получи код в Telegram' });
     }
 
-    db.prepare('UPDATE users SET is_verified = 1, verification_code = NULL WHERE email = ?').run(email);
-    console.log(`✅ Аккаунт ${email} подтверждён`);
+    if (session.code !== code) {
+      return res.status(400).json({ success: false, error: 'Неверный код' });
+    }
+
+    // Помечаем сессию как использованную и активируем пользователя
+    db.prepare('UPDATE telegram_sessions SET is_used = 1 WHERE session_token = ?').run(user.verification_code);
+    db.prepare('UPDATE users SET is_verified = 1, verification_code = NULL, telegram_chat_id = ? WHERE email = ?')
+      .run(session.telegram_chat_id, email);
+    
+    console.log(`✅ Аккаунт ${email} подтверждён через Telegram`);
     res.json({ success: true, message: 'Аккаунт успешно подтверждён!' });
 
   } catch (error) {
@@ -207,7 +319,7 @@ app.post('/login', (req, res) => {
     }
 
     if (!user.is_verified) {
-      return res.status(403).json({ success: false, error: 'Почта не подтверждена. Проверьте email.' });
+      return res.status(403).json({ success: false, error: 'Аккаунт не подтверждён' });
     }
 
     console.log(`🔑 Пользователь ${email} вошёл в систему`);
@@ -229,7 +341,6 @@ app.post('/login', (req, res) => {
 app.get('/api/users', (req, res) => {
   try {
     const currentEmail = req.query.currentEmail;
-    
     if (!currentEmail) {
       return res.status(400).json({ success: false, error: 'currentEmail обязателен' });
     }
@@ -243,18 +354,14 @@ app.get('/api/users', (req, res) => {
 
     const usersWithUnread = users.map(user => {
       const unreadCount = db.prepare(`
-        SELECT COUNT(*) as count 
-        FROM messages 
+        SELECT COUNT(*) as count FROM messages 
         WHERE sender_email = ? AND receiver_email = ? AND is_read = 0
       `).get(user.email, currentEmail);
 
       const lastMessage = db.prepare(`
-        SELECT message_text, timestamp, sender_email
-        FROM messages 
-        WHERE (sender_email = ? AND receiver_email = ?) 
-           OR (sender_email = ? AND receiver_email = ?)
-        ORDER BY timestamp DESC
-        LIMIT 1
+        SELECT message_text, timestamp, sender_email FROM messages 
+        WHERE (sender_email = ? AND receiver_email = ?) OR (sender_email = ? AND receiver_email = ?)
+        ORDER BY timestamp DESC LIMIT 1
       `).get(user.email, currentEmail, currentEmail, user.email);
 
       return {
@@ -276,9 +383,7 @@ app.get('/api/users', (req, res) => {
     });
 
     res.json({ success: true, users: usersWithUnread });
-
   } catch (error) {
-    console.error('Ошибка получения пользователей:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -289,29 +394,23 @@ app.get('/api/users', (req, res) => {
 app.get('/api/messages', (req, res) => {
   try {
     const { with: partnerEmail, currentEmail } = req.query;
-
     if (!partnerEmail || !currentEmail) {
       return res.status(400).json({ success: false, error: 'with и currentEmail обязательны' });
     }
 
     const messages = db.prepare(`
-      SELECT id, sender_email, receiver_email, message_text, timestamp
-      FROM messages 
-      WHERE (sender_email = ? AND receiver_email = ?) 
-         OR (sender_email = ? AND receiver_email = ?)
+      SELECT id, sender_email, receiver_email, message_text, timestamp FROM messages 
+      WHERE (sender_email = ? AND receiver_email = ?) OR (sender_email = ? AND receiver_email = ?)
       ORDER BY timestamp ASC
     `).all(currentEmail, partnerEmail, partnerEmail, currentEmail);
 
     db.prepare(`
-      UPDATE messages 
-      SET is_read = 1 
+      UPDATE messages SET is_read = 1 
       WHERE sender_email = ? AND receiver_email = ? AND is_read = 0
     `).run(partnerEmail, currentEmail);
 
     res.json({ success: true, messages });
-
   } catch (error) {
-    console.error('Ошибка получения сообщений:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
@@ -322,13 +421,8 @@ app.get('/api/messages', (req, res) => {
 app.post('/api/messages', (req, res) => {
   try {
     const { senderEmail, receiverEmail, messageText } = req.body;
-
-    if (!senderEmail || !receiverEmail || !messageText) {
+    if (!senderEmail || !receiverEmail || !messageText || !messageText.trim()) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
-    }
-
-    if (!messageText.trim()) {
-      return res.status(400).json({ success: false, error: 'Сообщение не может быть пустым' });
     }
 
     const receiver = db.prepare('SELECT * FROM users WHERE email = ? AND is_verified = 1').get(receiverEmail);
@@ -337,41 +431,37 @@ app.post('/api/messages', (req, res) => {
     }
 
     const result = db.prepare(`
-      INSERT INTO messages (sender_email, receiver_email, message_text) 
-      VALUES (?, ?, ?)
+      INSERT INTO messages (sender_email, receiver_email, message_text) VALUES (?, ?, ?)
     `).run(senderEmail, receiverEmail, messageText.trim());
 
     const newMessage = db.prepare('SELECT * FROM messages WHERE id = ?').get(result.lastInsertRowid);
-
-    console.log(`💬 ${senderEmail} → ${receiverEmail}: ${messageText.substring(0, 50)}...`);
+    console.log(`💬 ${senderEmail} → ${receiverEmail}: ${messageText.substring(0, 50)}`);
     
-    res.json({ success: true, message: newMessage });
+    // Уведомление получателю в Telegram (если у него привязан)
+    if (receiver.telegram_chat_id) {
+      sendTelegramMessage(receiver.telegram_chat_id, 
+        `💬 <b>Новое сообщение</b> от ${senderEmail}:\n\n${messageText.trim()}`
+      ).catch(() => {});
+    }
 
+    res.json({ success: true, message: newMessage });
   } catch (error) {
-    console.error('Ошибка отправки сообщения:', error);
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
 });
 
 // =============================================
-// ЭНДПОИНТ: ПОЛУЧИТЬ ИНФОРМАЦИЮ О ПОЛЬЗОВАТЕЛЕ
+// ЭНДПОИНТ: ПОЛУЧИТЬ ИНФО О ПОЛЬЗОВАТЕЛЕ
 // =============================================
 app.get('/api/user', (req, res) => {
   try {
     const { email } = req.query;
-
-    if (!email) {
-      return res.status(400).json({ success: false, error: 'email обязателен' });
-    }
+    if (!email) return res.status(400).json({ success: false, error: 'email обязателен' });
 
     const user = db.prepare('SELECT id, username, email FROM users WHERE email = ? AND is_verified = 1').get(email);
-    
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'Пользователь не найден' });
-    }
+    if (!user) return res.status(404).json({ success: false, error: 'Пользователь не найден' });
 
     res.json({ success: true, user });
-
   } catch (error) {
     res.status(500).json({ success: false, error: 'Ошибка сервера' });
   }
@@ -394,7 +484,8 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════');
-  console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН (Brevo API)');
+  console.log('  🚀 MESSENGER SERVER ЗАПУЩЕН');
+  console.log('  🤖 Telegram Bot: @' + TELEGRAM_BOT_USERNAME);
   console.log('═══════════════════════════════════════════════');
   console.log(`  📍 Порт: ${PORT}`);
   console.log('═══════════════════════════════════════════════');
